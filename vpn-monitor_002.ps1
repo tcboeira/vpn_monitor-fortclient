@@ -11,17 +11,19 @@
 
     Função               Responsabilidade
     ------               ----------------
-    Write-VpnLog         grava histórico de sessões de VPN
-    Get-TotalTime        lê tempo total acumulado do dia
-    Save-TotalTime       salva tempo total acumulado
-    New-TimeIcon         cria ícone dinâmico para o systray
-    Generate-VpnChart    gera gráfico de horas de VPN por dia
-    Generate-MonthReport gera relatório mensal em CSV
-
+    Write-VpnLog ............ Grava histórico de sessões de VPN
+    Get-TotalTime ........... Lê tempo total acumulado do dia
+    Save-TotalTime .......... Salva tempo total acumulado
+    New-TimeIcon ............ Cria ícone dinâmico para o systray
+    Generate-VpnChart ....... Gera gráfico de horas de VPN por dia
+    Generate-MonthReport .... Gera relatório mensal em CSV
+    Disconnect-VPN .......... Função para desconectar a VPN 
+    Show-LunchDialog ........ Função de exibição de tela proximo ao almoço
+    
 
     .NOTES
     Autor: Thiago Boeira
-    Versão: 1.0
+    Versão: 0.7d
     Data: 2026
     #>
 
@@ -29,7 +31,7 @@
 <#
 	Nome: vpn-monitor_002.ps1
 	Data: 05/03/2026 - 14h21
-	Versão: 0.6d
+	Versão: 0.7d
 	Criado: Thiago Boeira
 			tcboeira@gmail.com
 		
@@ -41,6 +43,9 @@
 	#
 	Versão // Data - Hora // Alteração-Descrição
 
+    0.7d // 11/03/2026 - 13h30 // - Incrementado com sugestão de conexão proximo das 12h para indicar horario de almoço;
+                                  - Forçar desconexão próximo das 18h para evitar horas extras indesejadas;
+    
     0.6d // 06/03/2026 - 10h50 // - Corrigido para que se evite abrir duas vezes;
                                  - Efetua gravação de histórico de uso;
                                  - Gera gráfico automático, relatório mensal;
@@ -77,6 +82,7 @@
 # Informa qual versão do PowerShell é necessária para rodar este script e ativa o modo estrito para evitar erros comuns de codificação.
 ########################################################################################
     #Requires -Version 5.1
+
 
 ########################################################################################
 # Ativa o modo estrito para a versão mais recente do PowerShell, o que ajuda a identificar erros de codificação e práticas inseguras.
@@ -125,6 +131,7 @@
 ########################################################################################
     $ALERTLUNCH = $false
     $ALERTEND = $false
+    $ALERTMAXHOURS = $false
     $VPNCONNECTED = $false
     $LASTDAY = (Get-Date).Date
 
@@ -134,6 +141,37 @@
 # v ÁREA DE DECLARAÇÃO DE FUNÇÕES v #
 #####################################
 #####################################
+
+    ########################################################################################
+    # Função para desconectar a VPN 
+    function Disconnect-VPN {
+
+        $VPN = Get-NetAdapter | Where-Object {
+            ($_.Name -like "*Fortinet*" -or $_.InterfaceDescription -like $ADAPTERPATTERN) `
+            -and $_.Status -eq "Up"
+        }
+
+        if ($VPN){
+            Disable-NetAdapter -Name $VPN.Name -Confirm:$false
+        }
+    }
+
+    ########################################################################################
+    # Função de exibição de tela proximo ao almoço
+    function Show-LunchDialog {
+
+    $RESULT = [System.Windows.Forms.MessageBox]::Show(
+        "Já são 12h.`n`nHorário de almoço.`nDeseja desconectar a VPN agora?",
+        "VPN Monitor",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Question
+    )
+
+    if ($RESULT -eq "Yes"){
+        Disconnect-VPN
+    }
+}
+
 
     ########################################################################################
     # Função para registrar sessão de uso da VPN em um arquivo CSV ($LOGFILE), 
@@ -388,15 +426,31 @@
 ########################################################################################
     while ($true){
 
-        $CURRENTDAY = (Get-Date).Date
+        # Verifica se é meio-dia para sugerir pausa para almoço
+        $NOW = Get-Date
+        $CURRENTDAY = $NOW.Date
 
-        if ($CURRENTDAY -ne $LASTDAY){
-
-            Generate-MonthReport
-            Remove-Item $TOTALFILE -ErrorAction SilentlyContinue
-            $LASTDAY = $CURRENTDAY
-
+       #if ($NOW.Hour -eq 12 -and !$ALERTLUNCH){
+        if ($NOW.Hour -ge 12 -and $NOW.Hour -lt 13 -and !$ALERTLUNCH){
+            
+            Show-LunchDialog
+            $ALERTLUNCH = $true
         }
+
+
+
+        #$CURRENTDAY = (Get-Date).Date
+        if ($CURRENTDAY -ne $LASTDAY){
+        Generate-MonthReport
+        Remove-Item $TOTALFILE -ErrorAction SilentlyContinue
+
+        $ALERTMAXHOURS = $false
+        $ALERTLUNCH = $false
+        $ALERTEND = $false
+
+        $LASTDAY = $CURRENTDAY
+        }
+
 
         $VPN = Get-NetAdapter | Where-Object {
 
@@ -426,7 +480,7 @@
                 )
             }
 
-            $STARTCONTENT = Get-Content $STARTFILE -First 1 -ErrorAction SilentlyContinue
+          <#$STARTCONTENT = Get-Content $STARTFILE -First 1 -ErrorAction SilentlyContinue
 
             try{
                 $START = [datetime]::Parse($STARTCONTENT)
@@ -436,16 +490,44 @@
             }
 
             $ELAPSED = (Get-Date) - $START
+            $TOTAL = Get-TotalTime#>
+
+            $STARTCONTENT = Get-Content $STARTFILE -First 1 -ErrorAction SilentlyContinue
+            try{
+                    $START = [datetime]::Parse($STARTCONTENT)
+                }
+                catch{
+                    $START = Get-Date
+            }
+
+            $ELAPSED = (Get-Date) - $START
             $TOTAL = Get-TotalTime
+
+            # NOVO TRECHO
+            $TOTALDAY = $TOTAL + $ELAPSED
+
+            if ($TOTALDAY.TotalHours -ge 8 -and !$ALERTMAXHOURS){
+
+                $ALERTMAXHOURS = $true
+
+                Show-Alert `
+                    "A VPN foi desconectada automaticamente.`n`nVocê atingiu 8h de jornada hoje." `
+                    "VPN Monitor"
+
+                Disconnect-VPN
+            }
+
 
             $HOURS = [int]$ELAPSED.TotalHours
 
             $NOTIFY.Icon = New-TimeIcon("$HOURS")
 
-            $NOTIFY.Text = "VPN: $($ELAPSED.ToString("hh\:mm")) | Total hoje: $($TOTAL.ToString("hh\:mm"))"
+           #$NOTIFY.Text = "VPN: $($ELAPSED.ToString("hh\:mm")) | Total hoje: $($TOTAL.ToString("hh\:mm"))"
+            $NOTIFY.Text = "VPN: $($ELAPSED.ToString("hh\:mm")) | Total hoje: $($TOTALDAY.ToString("hh\:mm"))"
 
-            if ($ELAPSED.TotalMinutes -ge 230 -and !$ALERTLUNCH){
-
+           #if ($ELAPSED.TotalMinutes -ge 230 -and !$ALERTLUNCH){
+            if ($ELAPSED.TotalMinutes -ge 240 -and !$ALERTLUNCH){
+                
                 Show-Alert "Voce esta perto de 4h de conexao.`nHora de pausa para almoço." "VPN Monitor"
                 $ALERTLUNCH = $true
             }
@@ -464,10 +546,20 @@
                 $VPNCONNECTED = $false
                 $NOTIFY.Icon = $ICONDISCONNECTED
 
-                if (Test-Path $STARTFILE){
+<#>                if (Test-Path $STARTFILE){
 
                     $START = [datetime]::Parse((Get-Content $STARTFILE -First 1))
                     $ELAPSED = (Get-Date) - $START
+#>
+                if (Test-Path $STARTFILE){
+                    try{
+                        $START = [datetime]::Parse((Get-Content $STARTFILE -First 1))
+                    }
+                    catch{
+                        $START = Get-Date
+                    }
+                $ELAPSED = (Get-Date) - $START
+
 
                     Write-VpnLog $START (Get-Date) $ELAPSED
                     Generate-VpnChart
