@@ -1,48 +1,80 @@
 <#
-    .SYNOPSIS
+.SYNOPSIS
     Monitor de uso de VPN para usuários.
 
-    .DESCRIPTION
+.DESCRIPTION
     Este script monitora o estado da VPN Fortinet no computador.
-    Ele registra sessões de conexão, calcula o tempo total diário
-    e gera relatórios e gráficos de uso.
+    Ele registra sessões de conexão, calcula o tempo total diário,
+    gera relatórios e gráficos de uso e envia notificações via Telegram.
 
-    Funções internas do script:
+    O script também possui controle de jornada, podendo sugerir pausa
+    para almoço, alertar sobre tempo de conexão e desconectar a VPN
+    automaticamente quando o limite diário de horas for atingido.
 
-    Função               Responsabilidade
-    ------               ----------------
-    Write-VpnLog ............ Grava histórico de sessões de VPN
-    Get-TotalTime ........... Lê tempo total acumulado do dia
-    Save-TotalTime .......... Salva tempo total acumulado
-    New-TimeIcon ............ Cria ícone dinâmico para o systray
-    Generate-VpnChart ....... Gera gráfico de horas de VPN por dia
-    Generate-MonthReport .... Gera relatório mensal em CSV
-    Disconnect-VPN .......... Função para desconectar a VPN 
-    Show-LunchDialog ........ Função de exibição de tela proximo ao almoço
-    
+Funções internas do script:
 
-    .NOTES
+    Função                  Responsabilidade
+    ------                  ----------------
+    Send-TelegramMessage    Envia mensagens de alerta ao Telegram
+    Send-TelegramPhoto      Envia imagens (gráficos) ao Telegram
+    Write-VpnLog            Grava histórico de sessões de VPN
+    Get-TotalTime           Lê tempo total acumulado do dia
+    Save-TotalTime          Salva tempo total acumulado
+    New-TimeIcon            Cria ícone dinâmico para o systray
+    Generate-VpnChart       Gera gráfico de horas de VPN por dia
+    Generate-MonthReport    Gera relatório mensal em CSV
+    Disconnect-VPN          Desconecta a VPN automaticamente
+    Show-LunchDialog        Exibe sugestão de pausa para almoço
+    Show-Alert              Exibe mensagens de alerta ao usuário
+
+.EXAMPLE
+    .\vpn-monitor_002.ps1
+
+    Inicia o monitor de uso da VPN no computador local.
+    O script passa a monitorar a conexão VPN Fortinet, registrar o
+    tempo de uso e gerar alertas conforme as regras definidas.
+
+.NOTES
     Autor: Thiago Boeira
-    Versão: 0.7d
+    Versão: 0.8d
     Data: 2026
-    #>
-
+#>
 
 <#
 	Nome: vpn-monitor_002.ps1
 	Data: 05/03/2026 - 14h21
-	Versão: 0.7d
+    Última revisão: 12/03/2026 - 13h30
+
+	Versão: 0.8d
 	Criado: Thiago Boeira
 			tcboeira@gmail.com
 		
 	Função/Descrição:	Avaliar tempo de conexão de VPN, quando estabelecido, e avisar com 4h e 8h10, sugerindo pausa para almoço, bem como desconexão.
                         É para questões de ajuste visando PPR e monitorias de trabalho
 
+    Dependências:
+    - PowerShell 5.1+
+    - Fortinet SSL VPN Adapter
+    - Acesso à API Telegram (opcional)
+
+    Ambiente:
+    - Windows 10 / Windows 11
+    - Uso local (não requer privilégios administrativos)
+
 	###########################
 	# Anotações de Alterações #
 	#
 	Versão // Data - Hora // Alteração-Descrição
 
+    0.8d // 12/03/2026 - 13h30 // - Sugestão automática de pausa próxima das 12h (almoço);
+                                  - Desconexão automática ao atingir 8h de jornada;
+                                  - Integração com Telegram (avisos de conexão, desconexão e alertas);
+                                  - Envio automático do gráfico diário ao Telegram;
+                                  - Aplicado timeout em chamadas da API para evitar travamento;
+                                  - Correção de duplicação de processamento ao desconectar VPN;
+                                  - Melhor tratamento de erros na leitura de arquivos de controle;
+
+    
     0.7d // 11/03/2026 - 13h30 // - Incrementado com sugestão de conexão proximo das 12h para indicar horario de almoço;
                                   - Forçar desconexão próximo das 18h para evitar horas extras indesejadas;
     
@@ -76,7 +108,6 @@
         d - Desenvolvimento (exibe descrição, até chegar na versão de produção)
 
 #>
-
 
 ########################################################################################
 # Informa qual versão do PowerShell é necessária para rodar este script e ativa o modo estrito para evitar erros comuns de codificação.
@@ -141,6 +172,53 @@
 # v ÁREA DE DECLARAÇÃO DE FUNÇÕES v #
 #####################################
 #####################################
+
+   ########################################################################################
+    # Função para enviar mensagens via Telegram
+    function Send-TelegramMessage($TEXT){
+
+    $TOKEN  = "SEU_TOKEN"
+    $CHATID = "SEU_CHATID"
+
+    try{
+        Invoke-RestMethod `
+        -Uri "https://api.telegram.org/bot$TOKEN/sendMessage" `
+        -Method Post `
+        -Body @{
+            chat_id = $CHATID
+            text    = $TEXT
+        } `
+        -TimeoutSec 5 | Out-Null
+    }
+    catch{
+        Write-Host "Erro ao enviar mensagem Telegram"
+    }
+    }
+
+    ########################################################################################
+    # Função para enviar imagens da conexão/dia ao Telegram
+    function Send-TelegramPhoto($FILE){
+
+    $TOKEN  = "SEU_TOKEN"
+    $CHATID = "SEU_CHATID"
+
+    if (!(Test-Path $FILE)){ return }
+
+    try{
+        Invoke-RestMethod `
+        -Uri "https://api.telegram.org/bot$TOKEN/sendPhoto" `
+        -Method Post `
+        -Form @{
+            chat_id = $CHATID
+            photo   = Get-Item $FILE
+        } `
+        -TimeoutSec 10 | Out-Null
+    }
+    catch{
+        Write-Host "Erro ao enviar foto Telegram"
+    }
+    }
+
 
     ########################################################################################
     # Função para desconectar a VPN 
@@ -257,18 +335,23 @@
         if (!(Test-Path $LOGFILE)) { return }
 
         $DATA = Import-Csv $LOGFILE
+            if (!$DATA){ return }
 
         $GROUP = $DATA | ForEach-Object {
-
-            $DAY = (Get-Date $_.DataInicio).Date
-            $DUR = [timespan]::Parse($_.Duracao)
+            try{
+                $DAY = (Get-Date $_.DataInicio).Date
+                $DUR = [timespan]::Parse($_.Duracao)
+            }
+            catch{
+                return
+            }
 
             [PSCustomObject]@{
                 Day   = $DAY
                 Hours = $DUR.TotalHours
             }
 
-        } | Group-Object Day | ForEach-Object {
+            } | Group-Object Day | ForEach-Object {
 
             [PSCustomObject]@{
                 Day   = $_.Name
@@ -282,6 +365,10 @@
         $CHART.Height = 400
 
         $AREA = New-Object System.Windows.Forms.DataVisualization.Charting.ChartArea
+            $AREA.AxisX.Interval = 1
+            $AREA.AxisX.LabelStyle.Angle = -45
+            $AREA.AxisY.Title = "Horas de VPN"
+
         $CHART.ChartAreas.Add($AREA)
 
         $SERIES = New-Object System.Windows.Forms.DataVisualization.Charting.Series
@@ -478,6 +565,7 @@
                     "VPN conectada",
                     [System.Windows.Forms.ToolTipIcon]::Info
                 )
+                Send-TelegramMessage "VPN conectada`nUsuário: $env:USERNAME`nComputador: $env:COMPUTERNAME`nHora: $(Get-Date -Format HH:mm)"
             }
 
           <#$STARTCONTENT = Get-Content $STARTFILE -First 1 -ErrorAction SilentlyContinue
@@ -493,12 +581,18 @@
             $TOTAL = Get-TotalTime#>
 
             $STARTCONTENT = Get-Content $STARTFILE -First 1 -ErrorAction SilentlyContinue
-            try{
+            if (-not $STARTCONTENT){
+                $START = Get-Date
+            }
+            else{
+                try{
                     $START = [datetime]::Parse($STARTCONTENT)
                 }
                 catch{
                     $START = Get-Date
+                }
             }
+
 
             $ELAPSED = (Get-Date) - $START
             $TOTAL = Get-TotalTime
@@ -513,6 +607,8 @@
                 Show-Alert `
                     "A VPN foi desconectada automaticamente.`n`nVocê atingiu 8h de jornada hoje." `
                     "VPN Monitor"
+
+                    Send-TelegramMessage "VPN Monitor: limite de 8h atingido. VPN foi desconectada automaticamente."
 
                 Disconnect-VPN
             }
@@ -530,6 +626,9 @@
                 
                 Show-Alert "Voce esta perto de 4h de conexao.`nHora de pausa para almoço." "VPN Monitor"
                 $ALERTLUNCH = $true
+
+                Send-TelegramMessage "VPN Monitor: você está próximo de 4h de conexão. Hora de pausa."
+
             }
 
             if ($ELAPSED.TotalMinutes -ge 485 -and !$ALERTEND){
@@ -545,33 +644,6 @@
 
                 $VPNCONNECTED = $false
                 $NOTIFY.Icon = $ICONDISCONNECTED
-
-<#>                if (Test-Path $STARTFILE){
-
-                    $START = [datetime]::Parse((Get-Content $STARTFILE -First 1))
-                    $ELAPSED = (Get-Date) - $START
-#>
-                if (Test-Path $STARTFILE){
-                    try{
-                        $START = [datetime]::Parse((Get-Content $STARTFILE -First 1))
-                    }
-                    catch{
-                        $START = Get-Date
-                    }
-                $ELAPSED = (Get-Date) - $START
-
-
-                    Write-VpnLog $START (Get-Date) $ELAPSED
-                    Generate-VpnChart
-
-                    $TOTAL = Get-TotalTime
-                    $TOTAL += $ELAPSED
-
-                    Save-TotalTime $TOTAL
-
-                    Remove-Item $STARTFILE -ErrorAction SilentlyContinue
-                }
-
                 $NOTIFY.Text = "VPN desconectada"
 
                 $NOTIFY.ShowBalloonTip(
@@ -580,10 +652,37 @@
                     "VPN desconectada",
                     [System.Windows.Forms.ToolTipIcon]::Info
                 )
+                
+                if (Test-Path $STARTFILE){
+                    try{
+                        $START = [datetime]::Parse((Get-Content $STARTFILE -First 1 -ErrorAction Stop))
+                    }
+                    catch{
+                        $START = Get-Date
+                    }
+
+                    $ELAPSED = (Get-Date) - $START
+
+                    Write-VpnLog $START (Get-Date) $ELAPSED
+
+                    Generate-VpnChart
+                    if (Test-Path $CHARTFILE){
+                        Send-TelegramPhoto $CHARTFILE
+                    }
+
+                    $TOTAL = Get-TotalTime
+                    $TOTAL += $ELAPSED
+                    Save-TotalTime $TOTAL
+
+                    Remove-Item $STARTFILE -ErrorAction SilentlyContinue
+
+                    Send-TelegramMessage "VPN desconectada. Tempo total hoje: $($TOTAL.ToString("hh\:mm"))"
+                }
             }
         }
 
         Start-Sleep -Seconds 15
 
     }
+
 
