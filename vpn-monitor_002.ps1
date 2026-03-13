@@ -36,7 +36,7 @@ Funções internas do script:
 
 .NOTES
     Autor: Thiago Boeira
-    Versão: 0.8d
+    Versão: 0.8.1d
     Data: 2026
 #>
 
@@ -45,7 +45,7 @@ Funções internas do script:
 	Data: 05/03/2026 - 14h21
     Última revisão: 12/03/2026 - 13h30
 
-	Versão: 0.8d
+	Versão: 0.8.1d
 	Criado: Thiago Boeira
 			tcboeira@gmail.com
 		
@@ -65,6 +65,8 @@ Funções internas do script:
 	# Anotações de Alterações #
 	#
 	Versão // Data - Hora // Alteração-Descrição
+
+    0.8.1d // 13/03/2026 - 8h55 // - Alterado função de envio de mensagens via Telegram para que use codificação UTF-8;
 
     0.8d // 12/03/2026 - 13h30 // - Sugestão automática de pausa próxima das 12h (almoço);
                                   - Desconexão automática ao atingir 8h de jornada;
@@ -176,23 +178,24 @@ Funções internas do script:
    ########################################################################################
     # Função para enviar mensagens via Telegram
     function Send-TelegramMessage($TEXT){
+        $TOKEN  = "SEU_TOKEN"
+        $CHATID = "SEU_CHATID"
 
-    $TOKEN  = "SEU_TOKEN"
-    $CHATID = "SEU_CHATID"
+        $BODY = "chat_id=$CHATID&text=$TEXT"
 
-    try{
-        Invoke-RestMethod `
-        -Uri "https://api.telegram.org/bot$TOKEN/sendMessage" `
-        -Method Post `
-        -Body @{
-            chat_id = $CHATID
-            text    = $TEXT
-        } `
-        -TimeoutSec 5 | Out-Null
-    }
-    catch{
-        Write-Host "Erro ao enviar mensagem Telegram"
-    }
+        $BYTES = [System.Text.Encoding]::UTF8.GetBytes($BODY)
+
+        try{
+            Invoke-RestMethod `
+            -Uri "https://api.telegram.org/bot$TOKEN/sendMessage" `
+            -Method Post `
+            -Body $BYTES `
+            -ContentType "application/x-www-form-urlencoded" `
+            -TimeoutSec 5 | Out-Null
+        }
+        catch{
+            Write-Host "Erro ao enviar mensagem Telegram"
+        }
     }
 
     ########################################################################################
