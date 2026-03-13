@@ -11,8 +11,6 @@ Script em PowerShell para monitoramento de tempo de uso de VPN Fortinet (FortiCl
 ---
 
 ## 📚 Sumário
-
-## 📚 Sumário
 - [Quick Start](#-quick-start)
 - [Descrição](#descrição)
 - [Funcionamento](#funcionamento)
@@ -28,23 +26,55 @@ Script em PowerShell para monitoramento de tempo de uso de VPN Fortinet (FortiCl
 
 ## 🚀 Quick Start
 
-Passos rápidos para executar o monitor de VPN.
+> ⚠️ **Requisitos:** PowerShell 5.1 ou superior e FortiClient instalado.
 
-### 1️⃣ Clonar o repositório
+
+Passos rápidos para instalar e executar o monitor de VPN.
+
+### 1️⃣ Baixar o projeto
+
+Clone o repositório:
+
+```
 git clone https://github.com/tcboeira/vpn_monitor-fortclient.git
+```
 
+ou baixe o arquivo **ZIP** diretamente do GitHub e extraia o conteúdo.
+
+---
 
 ### 2️⃣ Acessar a pasta do projeto
+
+```
 cd vpn_monitor-fortclient
+```
 
+---
 
-### 3️⃣ Executar o script PowerShell
-powershell -ExecutionPolicy Bypass -File script/vpn-monitor.ps1
+### 3️⃣ Executar o instalador
 
+Dê duplo clique no arquivo:
 
-### 4️⃣ (Opcional) Executar automaticamente com VBS
-Crie as pastas e mova cuidadosamente os arquivos como orientado
+```
+install.bat
+```
 
+ou execute pelo terminal:
+
+```
+install.bat
+```
+
+---
+
+### 4️⃣ Conclusão
+O instalador irá automaticamente:
+
+- criar a pasta `C:\VPNMonitor`
+- copiar os arquivos do script
+- criar um atalho de inicialização no Windows
+
+Após a instalação, o monitor iniciará automaticamente sempre que o usuário fizer login no Windows.
 
 ---
 
@@ -116,6 +146,8 @@ A organização do repositório segue uma estrutura simples para facilitar manut
 ```
 vpn_monitor-fortclient
 │
+├── install.bat
+│
 ├── script
 │   ├── vpn-monitor.ps1
 │   └── vpn-monitor.vbs
@@ -131,16 +163,21 @@ vpn_monitor-fortclient
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
 └── SECURITY.md
+
 ```
 
 ### Descrição das pastas
 
-| Pasta | Descrição |
+### Descrição das pastas e arquivos
+
+| Item | Descrição |
 |------|------|
+| install.bat | Instalador automático do monitor |
 | script | Contém os scripts principais do projeto |
 | docs | Documentação adicional |
-| logs | Arquivos de log gerados automaticamente pelo script |
-| reports | Relatórios e gráficos gerados automaticamente durante a execução |
+| logs | Arquivos de log gerados automaticamente |
+| reports | Relatórios e gráficos gerados pelo script |
+
 
 ---
 
@@ -186,7 +223,9 @@ O código pode ser utilizado como base de estudo, adaptação ou aprendizado, de
 
 ## Autor
 
-**Thiago Boeira**
+Thiago Boeira
 
-Versão: 0.8.1d  
-Ano: 2026
+- GitHub: https://github.com/tcboeira
+- Email: tcboeira@gmail.com
+
+Versão atual: **0.8.1d**
