@@ -1,5 +1,23 @@
 # vpn_monitor-fortclient
 
+Script para monitoramento de uso da VPN Fortinet.
+
+---
+
+## 📚 Sumário
+
+- [Descrição](#descrição)
+- [Funcionamento](#funcionamento)
+- [Recursos](#recursos)
+- [Arquitetura do Script](#arquitetura-do-script)
+- [Integração com Telegram](#integração-com-telegram)
+- [Requisitos](#requisitos)
+- [Autor](#autor)
+
+---
+
+## Descrição
+
 O **vpn_monitor-fortclient** é um script simples criado para que um usuário possa
 monitorar o tempo de uso de túnel VPN utilizando o FortiClient.
 
@@ -9,7 +27,7 @@ monitorias de trabalho e possibilidade de pagamento de **PPR**.
 
 ---
 
-# Funcionamento
+## Funcionamento
 
 O script avalia o tempo de conexão da VPN e gera alertas automáticos durante o dia.
 
@@ -20,22 +38,7 @@ Alertas principais:
 
 ---
 
-# Descrição
-
-Este script monitora o estado da VPN Fortinet no computador.
-
-Ele realiza:
-
-- registro das sessões de conexão
-- cálculo do tempo total diário
-- geração de relatórios
-- geração de gráficos de uso
-- alertas automáticos
-- integração opcional com Telegram
-
----
-
-# Recursos
+## Recursos
 
 - Monitoramento de conexão VPN FortiClient
 - Contador de tempo diário
@@ -50,7 +53,7 @@ Ele realiza:
 
 ---
 
-# Funções internas do script
+## Arquitetura do Script
 
 | Função | Responsabilidade |
 |------|------|
@@ -68,7 +71,7 @@ Ele realiza:
 
 ---
 
-# Integração com Telegram (Opcional)
+## Integração com Telegram (Opcional)
 
 O script pode enviar alertas e gráficos automaticamente para o Telegram.
 
@@ -79,16 +82,13 @@ Exemplos de notificações:
 - Alertas de jornada
 - Gráfico diário de uso
 
-Guia de configuração:
+📘 Guia de configuração:
 
-📘 Veja a documentação em:
-
-`docs/telegram_setup.md`
 [Configurar Bot do Telegram](docs/telegram_setup.md)
 
 ---
 
-# Requisitos
+## Requisitos
 
 - PowerShell 5.1 ou superior
 - FortiClient instalado
@@ -97,7 +97,7 @@ Guia de configuração:
 
 ---
 
-# Autor
+## Autor
 
 **Thiago Boeira**
 
