@@ -31,7 +31,7 @@ Script em PowerShell para monitoramento de tempo de uso de VPN Fortinet (FortiCl
 Passos rápidos para executar o monitor de VPN.
 
 ### 1️⃣ Clonar o repositório
-git clone https://github.com/SEU-USUARIO/vpn_monitor-fortclient.git
+git clone https://github.com/tcboeira/vpn_monitor-fortclient.git
 
 
 ### 2️⃣ Acessar a pasta do projeto
