@@ -26,6 +26,8 @@ Funções internas do script:
     Disconnect-VPN          Desconecta a VPN automaticamente
     Show-LunchDialog        Exibe sugestão de pausa para almoço
     Show-Alert              Exibe mensagens de alerta ao usuário
+	Generate-MonthReport	Calcula o total de horas de VPN por dia no mês atual e exporta para CSV.
+    
 
 .EXAMPLE
     .\vpn-monitor_002.ps1
@@ -36,7 +38,7 @@ Funções internas do script:
 
 .NOTES
     Autor: Thiago Boeira
-    Versão: 0.8.1d
+    Versão: 0.9d
     Data: 2026
 #>
 
@@ -45,7 +47,7 @@ Funções internas do script:
 	Data: 05/03/2026 - 14h21
     Última revisão: 12/03/2026 - 13h30
 
-	Versão: 0.8.1d
+	Versão: 0.9d
 	Criado: Thiago Boeira
 			tcboeira@gmail.com
 		
@@ -65,6 +67,8 @@ Funções internas do script:
 	# Anotações de Alterações #
 	#
 	Versão // Data - Hora // Alteração-Descrição
+
+   0.9d // 17/03/2026 - 16h05 //   - Corrigido questões a cerca de controle de desconexão e coleta de dados para controle diario de conexão e dados para reports dia e mês;
 
     0.8.1d // 13/03/2026 - 8h55 // - Alterado função de envio de mensagens via Telegram para que use codificação UTF-8;
 
@@ -117,6 +121,12 @@ Funções internas do script:
     #Requires -Version 5.1
 
 
+########################################################################################
+# Inibe erros em tela de usuarios durante a execução
+########################################################################################
+    $ErrorActionPreference = "SilentlyContinue"
+
+    
 ########################################################################################
 # Ativa o modo estrito para a versão mais recente do PowerShell, o que ajuda a identificar erros de codificação e práticas inseguras.
 ########################################################################################
@@ -282,25 +292,31 @@ Funções internas do script:
     ############################################################################################################################
     # Função para ler do arquivo ($TOTALFILE) o tempo total acumulado de uso da VPN no dia e retorná-lo como um objeto TimeSpan.
     function Get-TotalTime {
-
         if (Test-Path $TOTALFILE){
-
             try{
-                $CONTENT = Get-Content $TOTALFILE -First 1 -ErrorAction Stop
-                return [timespan]::Parse($CONTENT)
+                $CONTENT = Get-Content $TOTALFILE -Raw | ConvertFrom-Json
+                if ($CONTENT.Date -ne (Get-Date).ToString("yyyy-MM-dd")){
+                    return New-TimeSpan
+                }
+                return [timespan]::Parse($CONTENT.Total)
             }
             catch{
                 return New-TimeSpan
             }
         }
-
         return New-TimeSpan
     }
+
 
     ###############################################################################################################
     # Função para salvar no arquivo ($TOTALFILE) o tempo total acumulado de uso da VPN no dia, no formato TimeSpan.
     function Save-TotalTime($TS){
-        $TS.ToString() | Set-Content $TOTALFILE -Encoding UTF8
+        $OBJ = @{
+            Date  = (Get-Date).ToString("yyyy-MM-dd")
+            Total = $TS.ToString()
+        }
+
+        $OBJ | ConvertTo-Json | Set-Content $TOTALFILE -Encoding UTF8
     }
 
 
@@ -422,6 +438,27 @@ Funções internas do script:
     }
 
 
+    ######################################################################################################################################
+    # Função que salva o histórico diário de sessões de VPN em um arquivo CSV, incluindo data, duração da sessão e total acumulado no dia.
+    function Save-DailyHistory($SESSION,$TOTAL){
+        $FILE = "$BASEPATH\daily-history.csv"
+
+        $OBJ = [PSCustomObject]@{
+            Date            = (Get-Date).ToString("yyyy-MM-dd")
+            SessionDuration = $SESSION.ToString("hh\:mm\:ss")
+            TotalAtMoment   = $TOTAL.ToString("hh\:mm\:ss")
+        }
+
+        if (!(Test-Path $FILE)){
+            $OBJ | Export-Csv $FILE -NoTypeInformation -Encoding UTF8
+        }
+        else{
+            $OBJ | Export-Csv $FILE -Append -NoTypeInformation -Encoding UTF8
+        }
+    }
+
+
+
 ############################################
 ############################################
 # ^ FIM DA ÁREA DE DECLARAÇÃO DE FUNÇÕES ^ #
@@ -532,6 +569,7 @@ Funções internas do script:
         #$CURRENTDAY = (Get-Date).Date
         if ($CURRENTDAY -ne $LASTDAY){
         Generate-MonthReport
+        Generate-VpnChart
         Remove-Item $TOTALFILE -ErrorAction SilentlyContinue
 
         $ALERTMAXHOURS = $false
@@ -601,7 +639,10 @@ Funções internas do script:
             $TOTAL = Get-TotalTime
 
             # NOVO TRECHO
+            ##$TOTALDAY = $TOTAL + $ELAPSED
+            ##Save-TotalTime $TOTALDAY
             $TOTALDAY = $TOTAL + $ELAPSED
+
 
             if ($TOTALDAY.TotalHours -ge 8 -and !$ALERTMAXHOURS){
 
@@ -623,6 +664,7 @@ Funções internas do script:
 
            #$NOTIFY.Text = "VPN: $($ELAPSED.ToString("hh\:mm")) | Total hoje: $($TOTAL.ToString("hh\:mm"))"
             $NOTIFY.Text = "VPN: $($ELAPSED.ToString("hh\:mm")) | Total hoje: $($TOTALDAY.ToString("hh\:mm"))"
+
 
            #if ($ELAPSED.TotalMinutes -ge 230 -and !$ALERTLUNCH){
             if ($ELAPSED.TotalMinutes -ge 240 -and !$ALERTLUNCH){
@@ -677,6 +719,8 @@ Funções internas do script:
                     $TOTAL += $ELAPSED
                     Save-TotalTime $TOTAL
 
+                    Save-DailyHistory $ELAPSED $TOTAL
+
                     Remove-Item $STARTFILE -ErrorAction SilentlyContinue
 
                     Send-TelegramMessage "VPN desconectada. Tempo total hoje: $($TOTAL.ToString("hh\:mm"))"
@@ -684,8 +728,12 @@ Funções internas do script:
             }
         }
 
-        Start-Sleep -Seconds 15
+        #Start-Sleep -Seconds 15
+        Start-Sleep -Seconds 15 -ErrorAction SilentlyContinue
+
 
     }
+
+
 
 
