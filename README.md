@@ -136,6 +136,7 @@ O script é composto por diversas funções responsáveis por diferentes partes 
 | Disconnect-VPN | Desconecta a VPN automaticamente |
 | Show-LunchDialog | Exibe sugestão de pausa para almoço |
 | Show-Alert | Exibe mensagens de alerta ao usuário |
+| Generate-MonthReport | Calcula o total de horas de VPN por dia no mês atual e exporta para CSV. |
 
 ---
 
