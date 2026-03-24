@@ -38,16 +38,16 @@ Funções internas do script:
 
 .NOTES
     Autor: Thiago Boeira
-    Versão: 0.9d
+    Versão: 0.10d
     Data: 2026
 #>
 
 <#
 	Nome: vpn-monitor_002.ps1
 	Data: 05/03/2026 - 14h21
-    Última revisão: 12/03/2026 - 13h30
+    Última revisão: 24/03/2026 - 13h25
 
-	Versão: 0.9d
+	Versão: 0.10d
 	Criado: Thiago Boeira
 			tcboeira@gmail.com
 		
@@ -68,7 +68,10 @@ Funções internas do script:
 	#
 	Versão // Data - Hora // Alteração-Descrição
 
-   0.9d // 17/03/2026 - 16h05 //   - Corrigido questões a cerca de controle de desconexão e coleta de dados para controle diario de conexão e dados para reports dia e mês;
+   0.10d // 24/03/2026 - 13h25 // - Ajuste de alerta e exibição em telegram
+                                  - Melhora do controle de conexão, para melhor alertar casos de deconexão
+
+    0.9d // 17/03/2026 - 16h05 //   - Corrigido questões a cerca de controle de desconexão e coleta de dados para controle diario de conexão e dados para reports dia e mês;
 
     0.8.1d // 13/03/2026 - 8h55 // - Alterado função de envio de mensagens via Telegram para que use codificação UTF-8;
 
@@ -178,6 +181,8 @@ Funções internas do script:
     $VPNCONNECTED = $false
     $LASTDAY = (Get-Date).Date
 
+    $LASTVPNSTATE = $false
+
 
 #####################################
 #####################################
@@ -188,8 +193,8 @@ Funções internas do script:
    ########################################################################################
     # Função para enviar mensagens via Telegram
     function Send-TelegramMessage($TEXT){
-        $TOKEN  = "SEU_TOKEN"
-        $CHATID = "SEU_CHATID"
+		$TOKEN = "MEUTOKEN"
+		$CHATID = "MEUID"
 
         $BODY = "chat_id=$CHATID&text=$TEXT"
 
@@ -212,8 +217,8 @@ Funções internas do script:
     # Função para enviar imagens da conexão/dia ao Telegram
     function Send-TelegramPhoto($FILE){
 
-    $TOKEN  = "SEU_TOKEN"
-    $CHATID = "SEU_CHATID"
+		$TOKEN = "MEUTOKEN"
+		$CHATID = "MEUID"
 
     if (!(Test-Path $FILE)){ return }
 
@@ -581,33 +586,51 @@ Funções internas do script:
 
 
         $VPN = Get-NetAdapter | Where-Object {
-
-            ($_.Name -like "*Fortinet*" -or $_.InterfaceDescription -like $ADAPTERPATTERN) `
+        ($_.Name -like "*Fortinet*" -or $_.InterfaceDescription -like $ADAPTERPATTERN) `
             -and $_.Status -eq "Up"
-
         }
+
+        $CURRENTSTATE = [bool]$VPN
+
+
+        # =========================
+        # DETECÇÃO DE MUDANÇA DE ESTADO 
+        # =========================
+        if ($LASTVPNSTATE -and -not $CURRENTSTATE){
+            Send-TelegramMessage "⚠️ VPN caiu inesperadamente!"
+        }
+
+        if (-not $LASTVPNSTATE -and $CURRENTSTATE){
+            Send-TelegramMessage "🔄 VPN reconectada`nUsuário: $env:USERNAME`nComputador: $env:COMPUTERNAME`nHora: $(Get-Date -Format HH:mm)"
+        }
+
+        $LASTVPNSTATE = $CURRENTSTATE
+
 
         if ($VPN){
 
-            if (-not $VPNCONNECTED){
+    if (-not $VPNCONNECTED){
 
-                $VPNCONNECTED = $true
-                $ALERTLUNCH = $false
-                $ALERTEND = $false
+        if (-not (Test-Path $TOTALFILE)){
+            Send-TelegramMessage "🟢 VPN conectada (início do dia)`nUsuário: $env:USERNAME`nComputador: $env:COMPUTERNAME`nHora: $(Get-Date -Format HH:mm)"
+        }
 
-                $START = Get-Date
-                $START.ToString("yyyy-MM-dd HH:mm:ss") | Set-Content $STARTFILE -Encoding UTF8
+        $VPNCONNECTED = $true
+        $ALERTLUNCH = $false
+        $ALERTEND = $false
 
-                $NOTIFY.Icon = $ICONCONNECTED
+        $START = Get-Date
+        $START.ToString("yyyy-MM-dd HH:mm:ss") | Set-Content $STARTFILE -Encoding UTF8
 
-                $NOTIFY.ShowBalloonTip(
-                    5000,
-                    "VPN",
-                    "VPN conectada",
-                    [System.Windows.Forms.ToolTipIcon]::Info
-                )
-                Send-TelegramMessage "VPN conectada`nUsuário: $env:USERNAME`nComputador: $env:COMPUTERNAME`nHora: $(Get-Date -Format HH:mm)"
-            }
+        $NOTIFY.Icon = $ICONCONNECTED
+
+        $NOTIFY.ShowBalloonTip(
+            5000,
+            "VPN",
+            "VPN conectada",
+            [System.Windows.Forms.ToolTipIcon]::Info
+        )
+    }
 
           <#$STARTCONTENT = Get-Content $STARTFILE -First 1 -ErrorAction SilentlyContinue
 
@@ -639,9 +662,9 @@ Funções internas do script:
             $TOTAL = Get-TotalTime
 
             # NOVO TRECHO
-            ##$TOTALDAY = $TOTAL + $ELAPSED
-            ##Save-TotalTime $TOTALDAY
             $TOTALDAY = $TOTAL + $ELAPSED
+            Save-TotalTime $TOTALDAY
+            #$TOTALDAY = $TOTAL + $ELAPSED
 
 
             if ($TOTALDAY.TotalHours -ge 8 -and !$ALERTMAXHOURS){
@@ -729,11 +752,8 @@ Funções internas do script:
         }
 
         #Start-Sleep -Seconds 15
-        Start-Sleep -Seconds 15 -ErrorAction SilentlyContinue
+        #Start-Sleep -Seconds 15 -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2 -ErrorAction SilentlyContinue
 
 
     }
-
-
-
-
