@@ -229,4 +229,4 @@ Thiago Boeira
 - GitHub: https://github.com/tcboeira
 - Email: tcboeira@gmail.com
 
-Versão atual: **0.9d**
+Versão atual: **0.10d**

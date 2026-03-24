@@ -29,22 +29,22 @@ REM ========================================
 
 echo Verificando versao do PowerShell...
 
-for /f "delims=" %%v in ('powershell -NoProfile -Command "$PSVersionTable.PSVersion.Major"') do set PSVER=%%v
+    for /f "delims=" %%v in ('powershell -NoProfile -Command "$PSVersionTable.PSVersion.Major"') do set PSVER=%%v
 
-if not defined PSVER (
-echo ERRO: Nao foi possivel identificar a versao do PowerShell.
-pause
-exit /b
-)
+    if not defined PSVER (
+    echo ERRO: Nao foi possivel identificar a versao do PowerShell.
+    pause
+    exit /b
+    )
 
-if %PSVER% LSS 5 (
-echo.
-echo ERRO: PowerShell 5.1 ou superior eh necessario.
-echo Versao detectada: %PSVER%
-echo.
-pause
-exit /b
-)
+    if %PSVER% LSS 5 (
+    echo.
+    echo ERRO: PowerShell 5.1 ou superior eh necessario.
+    echo Versao detectada: %PSVER%
+    echo.
+    pause
+    exit /b
+    )
 
 echo PowerShell OK (versao %PSVER%)
 echo.
@@ -55,16 +55,16 @@ REM ========================================
 
 echo Verificando FortiClient...
 
-reg query "HKLM\SOFTWARE\Fortinet\FortiClient" >nul 2>&1
+    reg query "HKLM\SOFTWARE\Fortinet\FortiClient" >nul 2>&1
 
-if errorlevel 1 (
-echo.
-echo ERRO: FortiClient nao foi encontrado neste computador.
-echo Instale o FortiClient antes de continuar.
-echo.
-pause
-exit /b
-)
+    if errorlevel 1 (
+    echo.
+    echo ERRO: FortiClient nao foi encontrado neste computador.
+    echo Instale o FortiClient antes de continuar.
+    echo.
+    pause
+    exit /b
+    )
 
 echo FortiClient detectado.
 echo.
@@ -75,8 +75,8 @@ REM ========================================
 
 echo Removendo bloqueios de seguranca dos arquivos...
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-"Get-ChildItem '%~dp0' -Recurse | Unblock-File" >nul 2>&1
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "Get-ChildItem '%~dp0' -Recurse | Unblock-File" >nul 2>&1
 
 echo Arquivos desbloqueados.
 echo.
