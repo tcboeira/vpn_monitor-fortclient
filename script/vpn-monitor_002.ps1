@@ -38,16 +38,16 @@ Funções internas do script:
 
 .NOTES
     Autor: Thiago Boeira
-    Versão: 0.10d
+    Versão: 0.11d
     Data: 2026
 #>
 
 <#
 	Nome: vpn-monitor_002.ps1
 	Data: 05/03/2026 - 14h21
-    Última revisão: 24/03/2026 - 13h25
+    Última revisão: 25/03/2026 - 12h25
 
-	Versão: 0.10d
+	Versão: 0.11d
 	Criado: Thiago Boeira
 			tcboeira@gmail.com
 		
@@ -67,6 +67,10 @@ Funções internas do script:
 	# Anotações de Alterações #
 	#
 	Versão // Data - Hora // Alteração-Descrição
+
+   0.11d // 25/03/2026 - 12h25 // - Correção da captura de tempo conectado para evitar erros de leitura e cálculo do tempo total diário;
+                                  - Melhoria na geração de gráficos e relatórios para refletir corretamente o tempo de conexão diário, mesmo em casos de desconexões inesperadas.
+                                  - Ajustado timing para alerta de desconexão acidental da VPN  
 
    0.10d // 24/03/2026 - 13h25 // - Ajuste de alerta e exibição em telegram
                                   - Melhora do controle de conexão, para melhor alertar casos de deconexão
@@ -182,6 +186,7 @@ Funções internas do script:
     $LASTDAY = (Get-Date).Date
 
     $LASTVPNSTATE = $false
+	$MANUALDISCONNECT = $false
 
 
 #####################################
@@ -193,8 +198,8 @@ Funções internas do script:
    ########################################################################################
     # Função para enviar mensagens via Telegram
     function Send-TelegramMessage($TEXT){
-		$TOKEN = "MEUTOKEN"
-		$CHATID = "MEUID"
+        $TOKEN = "MEUTOKEN"
+        $CHATID = "MEUID"
 
         $BODY = "chat_id=$CHATID&text=$TEXT"
 
@@ -217,8 +222,8 @@ Funções internas do script:
     # Função para enviar imagens da conexão/dia ao Telegram
     function Send-TelegramPhoto($FILE){
 
-		$TOKEN = "MEUTOKEN"
-		$CHATID = "MEUID"
+		$TOKEN = "8306323035:AAGCoGN1bpS2lesy2wNcdqnvmhPJa2d_4qc"
+		$CHATID = "150521318"
 
     if (!(Test-Path $FILE)){ return }
 
@@ -256,17 +261,23 @@ Funções internas do script:
     # Função de exibição de tela proximo ao almoço
     function Show-LunchDialog {
 
-    $RESULT = [System.Windows.Forms.MessageBox]::Show(
-        "Já são 12h.`n`nHorário de almoço.`nDeseja desconectar a VPN agora?",
-        "VPN Monitor",
-        [System.Windows.Forms.MessageBoxButtons]::YesNo,
-        [System.Windows.Forms.MessageBoxIcon]::Question
-    )
+		$RESULT = [System.Windows.Forms.MessageBox]::Show(
+			"Já são 12h.`n`nHorário de almoço.`nDeseja desconectar a VPN agora?",
+			"VPN Monitor",
+			[System.Windows.Forms.MessageBoxButtons]::YesNo,
+			[System.Windows.Forms.MessageBoxIcon]::Question
+		)
 
-    if ($RESULT -eq "Yes"){
-        Disconnect-VPN
-    }
-}
+		if ($RESULT -eq "Yes"){
+
+$global:MANUALDISCONNECT = $true
+Disconnect-VPN
+Start-Sleep -Seconds 3
+
+
+
+		}
+	}
 
 
     ########################################################################################
@@ -596,9 +607,14 @@ Funções internas do script:
         # =========================
         # DETECÇÃO DE MUDANÇA DE ESTADO 
         # =========================
-        if ($LASTVPNSTATE -and -not $CURRENTSTATE){
-            Send-TelegramMessage "⚠️ VPN caiu inesperadamente!"
-        }
+		if ($LASTVPNSTATE -and -not $CURRENTSTATE){
+
+		if (-not $MANUALDISCONNECT){
+			Send-TelegramMessage "⚠️ VPN caiu inesperadamente!"
+		}
+		$MANUALDISCONNECT = $false
+		}
+
 
         if (-not $LASTVPNSTATE -and $CURRENTSTATE){
             Send-TelegramMessage "🔄 VPN reconectada`nUsuário: $env:USERNAME`nComputador: $env:COMPUTERNAME`nHora: $(Get-Date -Format HH:mm)"
@@ -610,6 +626,8 @@ Funções internas do script:
         if ($VPN){
 
     if (-not $VPNCONNECTED){
+
+	$ALERTMAXHOURS = $false
 
         if (-not (Test-Path $TOTALFILE)){
             Send-TelegramMessage "🟢 VPN conectada (início do dia)`nUsuário: $env:USERNAME`nComputador: $env:COMPUTERNAME`nHora: $(Get-Date -Format HH:mm)"
@@ -659,26 +677,25 @@ Funções internas do script:
 
 
             $ELAPSED = (Get-Date) - $START
-            $TOTAL = Get-TotalTime
+        $TOTAL = Get-TotalTime
 
-            # NOVO TRECHO
-            $TOTALDAY = $TOTAL + $ELAPSED
-            Save-TotalTime $TOTALDAY
-            #$TOTALDAY = $TOTAL + $ELAPSED
+        # ✔ cálculo correto do total do dia (sem salvar)
+        $TOTALDAY = $TOTAL + $ELAPSED
 
+if ($TOTALDAY.TotalHours -ge 8 -and !$ALERTMAXHOURS){
 
-            if ($TOTALDAY.TotalHours -ge 8 -and !$ALERTMAXHOURS){
+    $ALERTMAXHOURS = $true
 
-                $ALERTMAXHOURS = $true
+    Show-Alert `
+        "A VPN foi desconectada automaticamente.`n`nVocê atingiu 8h de jornada hoje." `
+        "VPN Monitor"
 
-                Show-Alert `
-                    "A VPN foi desconectada automaticamente.`n`nVocê atingiu 8h de jornada hoje." `
-                    "VPN Monitor"
+    Send-TelegramMessage "VPN Monitor: limite de 8h atingido. VPN foi desconectada automaticamente."
+        $global:MANUALDISCONNECT = $true
+        Disconnect-VPN
+        Start-Sleep -Seconds 3
 
-                    Send-TelegramMessage "VPN Monitor: limite de 8h atingido. VPN foi desconectada automaticamente."
-
-                Disconnect-VPN
-            }
+}
 
 
             $HOURS = [int]$ELAPSED.TotalHours
@@ -757,3 +774,6 @@ Funções internas do script:
 
 
     }
+
+
+
