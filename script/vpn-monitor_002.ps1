@@ -222,8 +222,8 @@ Funções internas do script:
     # Função para enviar imagens da conexão/dia ao Telegram
     function Send-TelegramPhoto($FILE){
 
-		$TOKEN = "8306323035:AAGCoGN1bpS2lesy2wNcdqnvmhPJa2d_4qc"
-		$CHATID = "150521318"
+        $TOKEN = "MEUTOKEN"
+        $CHATID = "MEUID"
 
     if (!(Test-Path $FILE)){ return }
 
