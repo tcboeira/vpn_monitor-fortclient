@@ -38,16 +38,16 @@ Funções internas do script:
 
 .NOTES
     Autor: Thiago Boeira
-    Versão: 0.11d
+    Versão: 0.11.1d
     Data: 2026
 #>
 
 <#
 	Nome: vpn-monitor_002.ps1
 	Data: 05/03/2026 - 14h21
-    Última revisão: 25/03/2026 - 12h25
+    Última revisão: 26/03/2026 - 9h
 
-	Versão: 0.11d
+	Versão: 0.11.1d
 	Criado: Thiago Boeira
 			tcboeira@gmail.com
 		
@@ -68,6 +68,8 @@ Funções internas do script:
 	#
 	Versão // Data - Hora // Alteração-Descrição
 
+   0.11.1d // 26/03/2026 - 9h // - Aperfeiçoamento das correções e ajustes da versão 0.11d;
+    
    0.11d // 25/03/2026 - 12h25 // - Correção da captura de tempo conectado para evitar erros de leitura e cálculo do tempo total diário;
                                   - Melhoria na geração de gráficos e relatórios para refletir corretamente o tempo de conexão diário, mesmo em casos de desconexões inesperadas.
                                   - Ajustado timing para alerta de desconexão acidental da VPN  
@@ -122,6 +124,7 @@ Funções internas do script:
 
 #>
 
+
 ########################################################################################
 # Informa qual versão do PowerShell é necessária para rodar este script e ativa o modo estrito para evitar erros comuns de codificação.
 ########################################################################################
@@ -133,7 +136,7 @@ Funções internas do script:
 ########################################################################################
     $ErrorActionPreference = "SilentlyContinue"
 
-    
+
 ########################################################################################
 # Ativa o modo estrito para a versão mais recente do PowerShell, o que ajuda a identificar erros de codificação e práticas inseguras.
 ########################################################################################
@@ -151,12 +154,12 @@ Funções internas do script:
 ########################################################################################
 # EVITA MÚLTIPLAS INSTÂNCIAS
 ########################################################################################
-    $MUTEX = New-Object System.Threading.Mutex($false,"VPNMonitorScript")
+    $MUTEX = New-Object System.Threading.Mutex($false, "VPNMonitorScript")
 
-    if (-not $MUTEX.WaitOne(0,$false)) {
-        [System.Windows.Forms.MessageBox]::Show("VPN Monitor já está em execução.")
-        exit
-    }
+        if (-not $MUTEX.WaitOne(0, $false)) {
+            [System.Windows.Forms.MessageBox]::Show("VPN Monitor já está em execução.")
+            exit
+        }
 
 
 ########################################################################################
@@ -166,13 +169,13 @@ Funções internas do script:
 
     $BASEPATH = "C:\VPNMonitor"
 
-    if (!(Test-Path $BASEPATH)) {
-        New-Item -ItemType Directory -Path $BASEPATH | Out-Null
-    }
+        if (!(Test-Path $BASEPATH)) {
+            New-Item -ItemType Directory -Path $BASEPATH | Out-Null
+        }
 
     $STARTFILE = "$BASEPATH\vpn-start.txt"
     $TOTALFILE = "$BASEPATH\vpn-total.txt"
-    $LOGFILE   = "$BASEPATH\vpn-log.csv"
+    $LOGFILE = "$BASEPATH\vpn-log.csv"
     $CHARTFILE = "$BASEPATH\vpn-chart.png"
 
 
@@ -184,9 +187,34 @@ Funções internas do script:
     $ALERTMAXHOURS = $false
     $VPNCONNECTED = $false
     $LASTDAY = (Get-Date).Date
-
     $LASTVPNSTATE = $false
-	$MANUALDISCONNECT = $false
+    $MANUALDISCONNECT = $false
+
+########################################################################################
+# Trecho adicionado para evitar que o script herde um tempo antigo caso seja reiniciado ou haja uma interrupção, verificando o timestamp da última execução e resetando o contador se necessário.
+########################################################################################
+    $LASTRUNFILE = "$BASEPATH\last-run.txt"
+
+    if (Test-Path $LASTRUNFILE) {
+        try {
+            $LASTRUN = Get-Content $LASTRUNFILE | Get-Date
+            $NOW = Get-Date
+
+            # Se passou muito tempo desde última execução → considera reboot/interrupção
+            if (($NOW - $LASTRUN).TotalMinutes -gt 10) {
+                Remove-Item $TOTALFILE -ErrorAction SilentlyContinue
+            }
+        }
+        catch {
+            Remove-Item $TOTALFILE -ErrorAction SilentlyContinue
+        }
+    }
+
+# Atualiza timestamp da execução atual
+(Get-Date) | Set-Content $LASTRUNFILE
+
+# Marca início do script (proteção anti-trigger imediato)
+$SCRIPTSTART = Get-Date
 
 
 #####################################
@@ -195,9 +223,9 @@ Funções internas do script:
 #####################################
 #####################################
 
-   ########################################################################################
+    ########################################################################################
     # Função para enviar mensagens via Telegram
-    function Send-TelegramMessage($TEXT){
+    function Send-TelegramMessage($TEXT) {
         $TOKEN = "MEUTOKEN"
         $CHATID = "MEUID"
 
@@ -205,84 +233,86 @@ Funções internas do script:
 
         $BYTES = [System.Text.Encoding]::UTF8.GetBytes($BODY)
 
-        try{
+        try {
             Invoke-RestMethod `
-            -Uri "https://api.telegram.org/bot$TOKEN/sendMessage" `
-            -Method Post `
-            -Body $BYTES `
-            -ContentType "application/x-www-form-urlencoded" `
-            -TimeoutSec 5 | Out-Null
+                -Uri "https://api.telegram.org/bot$TOKEN/sendMessage" `
+                -Method Post `
+                -Body $BYTES `
+                -ContentType "application/x-www-form-urlencoded" `
+                -TimeoutSec 5 | Out-Null
         }
-        catch{
+        catch {
             Write-Host "Erro ao enviar mensagem Telegram"
         }
     }
 
-    ########################################################################################
-    # Função para enviar imagens da conexão/dia ao Telegram
-    function Send-TelegramPhoto($FILE){
+
+########################################################################################
+# Função para enviar imagens da conexão/dia ao Telegram
+function Send-TelegramPhoto($FILE) {
 
         $TOKEN = "MEUTOKEN"
         $CHATID = "MEUID"
 
-    if (!(Test-Path $FILE)){ return }
+    if (!(Test-Path $FILE)) { return }
 
-    try{
+    try {
         Invoke-RestMethod `
-        -Uri "https://api.telegram.org/bot$TOKEN/sendPhoto" `
-        -Method Post `
-        -Form @{
+            -Uri "https://api.telegram.org/bot$TOKEN/sendPhoto" `
+            -Method Post `
+            -Form @{
             chat_id = $CHATID
             photo   = Get-Item $FILE
         } `
-        -TimeoutSec 10 | Out-Null
+            -TimeoutSec 10 | Out-Null
     }
-    catch{
+    catch {
         Write-Host "Erro ao enviar foto Telegram"
     }
-    }
+}
 
 
-    ########################################################################################
-    # Função para desconectar a VPN 
-    function Disconnect-VPN {
+########################################################################################
+# Função para desconectar a VPN 
+function Disconnect-VPN {
 
-        $VPN = Get-NetAdapter | Where-Object {
-            ($_.Name -like "*Fortinet*" -or $_.InterfaceDescription -like $ADAPTERPATTERN) `
+    $VPN = Get-NetAdapter | Where-Object {
+        ($_.Name -like "*Fortinet*" -or $_.InterfaceDescription -like $ADAPTERPATTERN) `
             -and $_.Status -eq "Up"
-        }
-
-        if ($VPN){
-            Disable-NetAdapter -Name $VPN.Name -Confirm:$false
-        }
     }
 
-    ########################################################################################
-    # Função de exibição de tela proximo ao almoço
-    function Show-LunchDialog {
-
-		$RESULT = [System.Windows.Forms.MessageBox]::Show(
-			"Já são 12h.`n`nHorário de almoço.`nDeseja desconectar a VPN agora?",
-			"VPN Monitor",
-			[System.Windows.Forms.MessageBoxButtons]::YesNo,
-			[System.Windows.Forms.MessageBoxIcon]::Question
-		)
-
-		if ($RESULT -eq "Yes"){
-
-$global:MANUALDISCONNECT = $true
-Disconnect-VPN
-Start-Sleep -Seconds 3
+    if ($VPN) {
+        Disable-NetAdapter -Name $VPN.Name -Confirm:$false
+    }
+}
 
 
+########################################################################################
+# Função de exibição de tela proximo ao almoço
+function Show-LunchDialog {
 
-		}
-	}
+    $RESULT = [System.Windows.Forms.MessageBox]::Show(
+        "Já são 12h.`n`nHorário de almoço.`nDeseja desconectar a VPN agora?",
+        "VPN Monitor",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Question
+    )
+
+    if ($RESULT -eq "Yes") {
+
+        $global:MANUALDISCONNECT = $true
+        Disconnect-VPN
+        Start-Sleep -Seconds 3
+
+
+
+    }
+}
 
 
     ########################################################################################
     # Função para registrar sessão de uso da VPN em um arquivo CSV ($LOGFILE), 
-    function Write-VpnLog($START,$END,$DURATION){
+    function Write-VpnLog($START, $END, $DURATION) {
 
         $OBJ = [PSCustomObject]@{
             DataInicio = $START
@@ -298,25 +328,26 @@ Start-Sleep -Seconds 3
         }
     }
 
+
     ###############################################################################################################
     # Função para exibir uma janela de alerta (MessageBox) ao usuário com uma mensagem ($MSG) e um título ($TITLE).
-    function Show-Alert($MSG,$TITLE){
-        [System.Windows.Forms.MessageBox]::Show($MSG,$TITLE)
+    function Show-Alert($MSG, $TITLE) {
+        [System.Windows.Forms.MessageBox]::Show($MSG, $TITLE)
     }
 
 
     ############################################################################################################################
     # Função para ler do arquivo ($TOTALFILE) o tempo total acumulado de uso da VPN no dia e retorná-lo como um objeto TimeSpan.
     function Get-TotalTime {
-        if (Test-Path $TOTALFILE){
-            try{
+        if (Test-Path $TOTALFILE) {
+            try {
                 $CONTENT = Get-Content $TOTALFILE -Raw | ConvertFrom-Json
-                if ($CONTENT.Date -ne (Get-Date).ToString("yyyy-MM-dd")){
+                if ($CONTENT.Date -ne (Get-Date).ToString("yyyy-MM-dd")) {
                     return New-TimeSpan
                 }
                 return [timespan]::Parse($CONTENT.Total)
             }
-            catch{
+            catch {
                 return New-TimeSpan
             }
         }
@@ -326,7 +357,7 @@ Start-Sleep -Seconds 3
 
     ###############################################################################################################
     # Função para salvar no arquivo ($TOTALFILE) o tempo total acumulado de uso da VPN no dia, no formato TimeSpan.
-    function Save-TotalTime($TS){
+    function Save-TotalTime($TS) {
         $OBJ = @{
             Date  = (Get-Date).ToString("yyyy-MM-dd")
             Total = $TS.ToString()
@@ -338,17 +369,17 @@ Start-Sleep -Seconds 3
 
     ########################################################################################
     # Função para criar um ícone 16x16 com texto dinâmico ($TEXT) para exibição no systray.
-    function New-TimeIcon($TEXT){
+    function New-TimeIcon($TEXT) {
 
-        $BMP = New-Object System.Drawing.Bitmap 16,16
+        $BMP = New-Object System.Drawing.Bitmap 16, 16
         $G = [System.Drawing.Graphics]::FromImage($BMP)
 
         $G.Clear([System.Drawing.Color]::Black)
 
-        $FONT = New-Object System.Drawing.Font("Arial",7,[System.Drawing.FontStyle]::Bold)
+        $FONT = New-Object System.Drawing.Font("Arial", 7, [System.Drawing.FontStyle]::Bold)
         $BRUSH = [System.Drawing.Brushes]::White
 
-        $G.DrawString($TEXT,$FONT,$BRUSH,0,0)
+        $G.DrawString($TEXT, $FONT, $BRUSH, 0, 0)
 
         $ICONHANDLE = $BMP.GetHicon()
         $ICON = [System.Drawing.Icon]::FromHandle($ICONHANDLE).Clone()
@@ -362,7 +393,6 @@ Start-Sleep -Seconds 3
     }
 
 
-
     #################################################
     # Gera um gráfico PNG com as horas de VPN por dia
     function Generate-VpnChart {
@@ -370,14 +400,14 @@ Start-Sleep -Seconds 3
         if (!(Test-Path $LOGFILE)) { return }
 
         $DATA = Import-Csv $LOGFILE
-            if (!$DATA){ return }
+        if (!$DATA) { return }
 
         $GROUP = $DATA | ForEach-Object {
-            try{
+            try {
                 $DAY = (Get-Date $_.DataInicio).Date
                 $DUR = [timespan]::Parse($_.Duracao)
             }
-            catch{
+            catch {
                 return
             }
 
@@ -386,7 +416,7 @@ Start-Sleep -Seconds 3
                 Hours = $DUR.TotalHours
             }
 
-            } | Group-Object Day | ForEach-Object {
+        } | Group-Object Day | ForEach-Object {
 
             [PSCustomObject]@{
                 Day   = $_.Name
@@ -400,21 +430,21 @@ Start-Sleep -Seconds 3
         $CHART.Height = 400
 
         $AREA = New-Object System.Windows.Forms.DataVisualization.Charting.ChartArea
-            $AREA.AxisX.Interval = 1
-            $AREA.AxisX.LabelStyle.Angle = -45
-            $AREA.AxisY.Title = "Horas de VPN"
+        $AREA.AxisX.Interval = 1
+        $AREA.AxisX.LabelStyle.Angle = -45
+        $AREA.AxisY.Title = "Horas de VPN"
 
         $CHART.ChartAreas.Add($AREA)
 
         $SERIES = New-Object System.Windows.Forms.DataVisualization.Charting.Series
         $SERIES.ChartType = "Column"
 
-        foreach ($ROW in $GROUP){
-            $SERIES.Points.AddXY($ROW.Day,$ROW.Hours)
+        foreach ($ROW in $GROUP) {
+            $SERIES.Points.AddXY($ROW.Day, $ROW.Hours)
         }
 
         $CHART.Series.Add($SERIES)
-        $CHART.SaveImage($CHARTFILE,"Png")
+        $CHART.SaveImage($CHARTFILE, "Png")
     }
 
 
@@ -456,7 +486,7 @@ Start-Sleep -Seconds 3
 
     ######################################################################################################################################
     # Função que salva o histórico diário de sessões de VPN em um arquivo CSV, incluindo data, duração da sessão e total acumulado no dia.
-    function Save-DailyHistory($SESSION,$TOTAL){
+    function Save-DailyHistory($SESSION, $TOTAL) {
         $FILE = "$BASEPATH\daily-history.csv"
 
         $OBJ = [PSCustomObject]@{
@@ -465,14 +495,13 @@ Start-Sleep -Seconds 3
             TotalAtMoment   = $TOTAL.ToString("hh\:mm\:ss")
         }
 
-        if (!(Test-Path $FILE)){
+        if (!(Test-Path $FILE)) {
             $OBJ | Export-Csv $FILE -NoTypeInformation -Encoding UTF8
         }
-        else{
+        else {
             $OBJ | Export-Csv $FILE -Append -NoTypeInformation -Encoding UTF8
         }
     }
-
 
 
 ############################################
@@ -483,7 +512,7 @@ Start-Sleep -Seconds 3
 
 
 ########################################################################################
-# SYSTRAY
+# Cria ícone na bandeja do sistema (systray) para monitoramento da VPN, com opções de menu para mostrar tempo, resetar contador, abrir gráfico e sair.
 ########################################################################################
     $NOTIFY = New-Object System.Windows.Forms.NotifyIcon
     $NOTIFY.Visible = $true
@@ -495,95 +524,88 @@ Start-Sleep -Seconds 3
     $NOTIFY.Text = "VPN Monitor"
 
 
-########################################################################################
-# MENU
-########################################################################################
-    $MENU = New-Object System.Windows.Forms.ContextMenuStrip
+    ########################################################################################
+    # MENU de opções ao clicar com o botão direito no ícone do systray
+        $MENU = New-Object System.Windows.Forms.ContextMenuStrip
 
-    $ITEMSHOW = New-Object System.Windows.Forms.ToolStripMenuItem
-    $ITEMSHOW.Text = "Mostrar tempo hoje"
+        $ITEMSHOW = New-Object System.Windows.Forms.ToolStripMenuItem
+        $ITEMSHOW.Text = "Mostrar tempo hoje"
 
-    $ITEMRESET = New-Object System.Windows.Forms.ToolStripMenuItem
-    $ITEMRESET.Text = "Resetar contador"
+        $ITEMRESET = New-Object System.Windows.Forms.ToolStripMenuItem
+        $ITEMRESET.Text = "Resetar contador"
 
-    $ITEMCHART = New-Object System.Windows.Forms.ToolStripMenuItem
-    $ITEMCHART.Text = "Abrir gráfico"
+        $ITEMCHART = New-Object System.Windows.Forms.ToolStripMenuItem
+        $ITEMCHART.Text = "Abrir gráfico"
 
-    $ITEMEXIT = New-Object System.Windows.Forms.ToolStripMenuItem
-    $ITEMEXIT.Text = "Sair"
+        $ITEMEXIT = New-Object System.Windows.Forms.ToolStripMenuItem
+        $ITEMEXIT.Text = "Sair"
 
-    $MENU.Items.Add($ITEMSHOW)
-    $MENU.Items.Add($ITEMRESET)
-    $MENU.Items.Add($ITEMCHART)
-    $MENU.Items.Add($ITEMEXIT)
+        $MENU.Items.Add($ITEMSHOW)
+        $MENU.Items.Add($ITEMRESET)
+        $MENU.Items.Add($ITEMCHART)
+        $MENU.Items.Add($ITEMEXIT)
 
-    $NOTIFY.ContextMenuStrip = $MENU
+        $NOTIFY.ContextMenuStrip = $MENU
 
+    ########################################################################################
+    # Eventos dos itens do menu do Systray
+        $ITEMSHOW.Add_Click({
 
-########################################################################################
-# AÇÕES MENU
-########################################################################################
-    $ITEMSHOW.Add_Click({
+                $TOTAL = Get-TotalTime
 
-        $TOTAL = Get-TotalTime
+                [System.Windows.Forms.MessageBox]::Show(
+                    "Tempo total hoje: $($TOTAL.ToString("hh\:mm"))",
+                    "VPN Monitor"
+                )
 
-        [System.Windows.Forms.MessageBox]::Show(
-            "Tempo total hoje: $($TOTAL.ToString("hh\:mm"))",
-            "VPN Monitor"
-        )
+            })
 
-    })
+        $ITEMRESET.Add_Click({
 
-    $ITEMRESET.Add_Click({
+                Remove-Item $TOTALFILE -ErrorAction SilentlyContinue
 
-        Remove-Item $TOTALFILE -ErrorAction SilentlyContinue
+                [System.Windows.Forms.MessageBox]::Show(
+                    "Contador resetado.",
+                    "VPN Monitor"
+                )
 
-        [System.Windows.Forms.MessageBox]::Show(
-            "Contador resetado.",
-            "VPN Monitor"
-        )
+            })
 
-    })
+        $ITEMCHART.Add_Click({
 
-    $ITEMCHART.Add_Click({
+                Generate-VpnChart
 
-        Generate-VpnChart
+                if (Test-Path $CHARTFILE) {
+                    Start-Process $CHARTFILE
+                }
 
-        if (Test-Path $CHARTFILE){
-            Start-Process $CHARTFILE
-        }
+            })
 
-    })
+        $ITEMEXIT.Add_Click({
 
-    $ITEMEXIT.Add_Click({
+                $NOTIFY.Visible = $false
+                $NOTIFY.Dispose()
+                exit
 
-        $NOTIFY.Visible = $false
-        $NOTIFY.Dispose()
-        exit
-
-    })
+            })
 
 
 ########################################################################################
 # LOOP PRINCIPAL
 ########################################################################################
-    while ($true){
+while ($true) {
 
-        # Verifica se é meio-dia para sugerir pausa para almoço
-        $NOW = Get-Date
-        $CURRENTDAY = $NOW.Date
+    # Verifica se é meio-dia para sugerir pausa para almoço
+    $NOW = Get-Date
+    $CURRENTDAY = $NOW.Date
 
-       #if ($NOW.Hour -eq 12 -and !$ALERTLUNCH){
-        if ($NOW.Hour -ge 12 -and $NOW.Hour -lt 13 -and !$ALERTLUNCH){
+    if ($NOW.Hour -ge 12 -and $NOW.Hour -lt 13 -and !$ALERTLUNCH) {
             
-            Show-LunchDialog
-            $ALERTLUNCH = $true
-        }
+        Show-LunchDialog
+        $ALERTLUNCH = $true
+    }
 
-
-
-        #$CURRENTDAY = (Get-Date).Date
-        if ($CURRENTDAY -ne $LASTDAY){
+    if ($CURRENTDAY -ne $LASTDAY) {
         Generate-MonthReport
         Generate-VpnChart
         Remove-Item $TOTALFILE -ErrorAction SilentlyContinue
@@ -593,187 +615,175 @@ Start-Sleep -Seconds 3
         $ALERTEND = $false
 
         $LASTDAY = $CURRENTDAY
-        }
-
-
-        $VPN = Get-NetAdapter | Where-Object {
-        ($_.Name -like "*Fortinet*" -or $_.InterfaceDescription -like $ADAPTERPATTERN) `
-            -and $_.Status -eq "Up"
-        }
-
-        $CURRENTSTATE = [bool]$VPN
-
-
-        # =========================
-        # DETECÇÃO DE MUDANÇA DE ESTADO 
-        # =========================
-		if ($LASTVPNSTATE -and -not $CURRENTSTATE){
-
-		if (-not $MANUALDISCONNECT){
-			Send-TelegramMessage "⚠️ VPN caiu inesperadamente!"
-		}
-		$MANUALDISCONNECT = $false
-		}
-
-
-        if (-not $LASTVPNSTATE -and $CURRENTSTATE){
-            Send-TelegramMessage "🔄 VPN reconectada`nUsuário: $env:USERNAME`nComputador: $env:COMPUTERNAME`nHora: $(Get-Date -Format HH:mm)"
-        }
-
-        $LASTVPNSTATE = $CURRENTSTATE
-
-
-        if ($VPN){
-
-    if (-not $VPNCONNECTED){
-
-	$ALERTMAXHOURS = $false
-
-        if (-not (Test-Path $TOTALFILE)){
-            Send-TelegramMessage "🟢 VPN conectada (início do dia)`nUsuário: $env:USERNAME`nComputador: $env:COMPUTERNAME`nHora: $(Get-Date -Format HH:mm)"
-        }
-
-        $VPNCONNECTED = $true
-        $ALERTLUNCH = $false
-        $ALERTEND = $false
-
-        $START = Get-Date
-        $START.ToString("yyyy-MM-dd HH:mm:ss") | Set-Content $STARTFILE -Encoding UTF8
-
-        $NOTIFY.Icon = $ICONCONNECTED
-
-        $NOTIFY.ShowBalloonTip(
-            5000,
-            "VPN",
-            "VPN conectada",
-            [System.Windows.Forms.ToolTipIcon]::Info
-        )
     }
 
-          <#$STARTCONTENT = Get-Content $STARTFILE -First 1 -ErrorAction SilentlyContinue
+    $VPN = Get-NetAdapter | Where-Object {
+        ($_.Name -like "*Fortinet*" -or $_.InterfaceDescription -like $ADAPTERPATTERN) `
+            -and $_.Status -eq "Up"
+    }
 
-            try{
+    $CURRENTSTATE = [bool]$VPN
+
+
+    # =========================
+    # DETECÇÃO DE MUDANÇA DE ESTADO 
+    # =========================
+    if ($LASTVPNSTATE -and -not $CURRENTSTATE) {
+
+        if (-not $MANUALDISCONNECT) {
+            Send-TelegramMessage "⚠️ VPN caiu inesperadamente!"
+        }
+        $MANUALDISCONNECT = $false
+    }
+
+    if (-not $LASTVPNSTATE -and $CURRENTSTATE) {
+        Send-TelegramMessage "🔄 VPN reconectada`nUsuário: $env:USERNAME`nComputador: $env:COMPUTERNAME`nHora: $(Get-Date -Format HH:mm)"
+    }
+
+    $LASTVPNSTATE = $CURRENTSTATE
+
+    if ($VPN) {
+
+        if (-not $VPNCONNECTED) {
+		
+            # Evita herdar tempo antigo após reconexão
+            $TOTAL = Get-TotalTime
+            if ($TOTAL.TotalHours -ge 8) {
+                $TOTAL = New-TimeSpan
+                Save-TotalTime $TOTAL 
+            }
+
+            $ALERTMAXHOURS = $false
+
+            if (-not (Test-Path $TOTALFILE)) {
+                Send-TelegramMessage "🟢 VPN conectada (início do dia)`nUsuário: $env:USERNAME`nComputador: $env:COMPUTERNAME`nHora: $(Get-Date -Format HH:mm)"
+            }
+
+            $VPNCONNECTED = $true
+            $ALERTLUNCH = $false
+            $ALERTEND = $false
+
+            $START = Get-Date
+            $START.ToString("yyyy-MM-dd HH:mm:ss") | Set-Content $STARTFILE -Encoding UTF8
+
+            $NOTIFY.Icon = $ICONCONNECTED
+
+            $NOTIFY.ShowBalloonTip(
+                5000,
+                "VPN",
+                "VPN conectada",
+                [System.Windows.Forms.ToolTipIcon]::Info
+            )
+        }
+
+        $STARTCONTENT = Get-Content $STARTFILE -First 1 -ErrorAction SilentlyContinue
+        if (-not $STARTCONTENT) {
+            $START = Get-Date
+        }
+        else {
+            try {
                 $START = [datetime]::Parse($STARTCONTENT)
             }
-            catch{
+            catch {
                 $START = Get-Date
             }
+        }
 
-            $ELAPSED = (Get-Date) - $START
-            $TOTAL = Get-TotalTime#>
-
-            $STARTCONTENT = Get-Content $STARTFILE -First 1 -ErrorAction SilentlyContinue
-            if (-not $STARTCONTENT){
-                $START = Get-Date
-            }
-            else{
-                try{
-                    $START = [datetime]::Parse($STARTCONTENT)
-                }
-                catch{
-                    $START = Get-Date
-                }
-            }
-
-
-            $ELAPSED = (Get-Date) - $START
+        $ELAPSED = (Get-Date) - $START
         $TOTAL = Get-TotalTime
 
         # ✔ cálculo correto do total do dia (sem salvar)
         $TOTALDAY = $TOTAL + $ELAPSED
 
-if ($TOTALDAY.TotalHours -ge 8 -and !$ALERTMAXHOURS){
-
-    $ALERTMAXHOURS = $true
-
-    Show-Alert `
-        "A VPN foi desconectada automaticamente.`n`nVocê atingiu 8h de jornada hoje." `
-        "VPN Monitor"
-
-    Send-TelegramMessage "VPN Monitor: limite de 8h atingido. VPN foi desconectada automaticamente."
-        $global:MANUALDISCONNECT = $true
-        Disconnect-VPN
-        Start-Sleep -Seconds 3
-
-}
+        if (
+            $TOTALDAY.TotalHours -ge 8 `
+                -and !$ALERTMAXHOURS `
+                -and ((Get-Date) - $SCRIPTSTART).TotalMinutes -gt 2
+        ) {
 
 
-            $HOURS = [int]$ELAPSED.TotalHours
+            $ALERTMAXHOURS = $true
 
-            $NOTIFY.Icon = New-TimeIcon("$HOURS")
+            Show-Alert `
+                "A VPN foi desconectada automaticamente.`n`nVocê atingiu 8h de jornada hoje." `
+                "VPN Monitor"
 
-           #$NOTIFY.Text = "VPN: $($ELAPSED.ToString("hh\:mm")) | Total hoje: $($TOTAL.ToString("hh\:mm"))"
-            $NOTIFY.Text = "VPN: $($ELAPSED.ToString("hh\:mm")) | Total hoje: $($TOTALDAY.ToString("hh\:mm"))"
+            Send-TelegramMessage "VPN Monitor: limite de 8h atingido. VPN foi desconectada automaticamente."
+            $global:MANUALDISCONNECT = $true
+            Disconnect-VPN
+            Start-Sleep -Seconds 3
 
-
-           #if ($ELAPSED.TotalMinutes -ge 230 -and !$ALERTLUNCH){
-            if ($ELAPSED.TotalMinutes -ge 240 -and !$ALERTLUNCH){
-                
-                Show-Alert "Voce esta perto de 4h de conexao.`nHora de pausa para almoço." "VPN Monitor"
-                $ALERTLUNCH = $true
-
-                Send-TelegramMessage "VPN Monitor: você está próximo de 4h de conexão. Hora de pausa."
-
-            }
-
-            if ($ELAPSED.TotalMinutes -ge 485 -and !$ALERTEND){
-
-                Show-Alert "Voce esta proximo de 8h10.`nSugestao: desconectar a VPN." "VPN Monitor"
-                $ALERTEND = $true
-            }
         }
 
-        else{
 
-            if ($VPNCONNECTED){
+        $HOURS = [int]$ELAPSED.TotalHours
 
-                $VPNCONNECTED = $false
-                $NOTIFY.Icon = $ICONDISCONNECTED
-                $NOTIFY.Text = "VPN desconectada"
+        $NOTIFY.Icon = New-TimeIcon("$HOURS")
 
-                $NOTIFY.ShowBalloonTip(
-                    4000,
-                    "VPN",
-                    "VPN desconectada",
-                    [System.Windows.Forms.ToolTipIcon]::Info
-                )
+        $NOTIFY.Text = "VPN: $($ELAPSED.ToString("hh\:mm")) | Total hoje: $($TOTALDAY.ToString("hh\:mm"))"
+
+        if ($ELAPSED.TotalMinutes -ge 240 -and !$ALERTLUNCH) {
                 
-                if (Test-Path $STARTFILE){
-                    try{
-                        $START = [datetime]::Parse((Get-Content $STARTFILE -First 1 -ErrorAction Stop))
-                    }
-                    catch{
-                        $START = Get-Date
-                    }
+            Show-Alert "Voce esta perto de 4h de conexao.`nHora de pausa para almoço." "VPN Monitor"
+            $ALERTLUNCH = $true
 
-                    $ELAPSED = (Get-Date) - $START
+            Send-TelegramMessage "VPN Monitor: você está próximo de 4h de conexão. Hora de pausa."
 
-                    Write-VpnLog $START (Get-Date) $ELAPSED
-
-                    Generate-VpnChart
-                    if (Test-Path $CHARTFILE){
-                        Send-TelegramPhoto $CHARTFILE
-                    }
-
-                    $TOTAL = Get-TotalTime
-                    $TOTAL += $ELAPSED
-                    Save-TotalTime $TOTAL
-
-                    Save-DailyHistory $ELAPSED $TOTAL
-
-                    Remove-Item $STARTFILE -ErrorAction SilentlyContinue
-
-                    Send-TelegramMessage "VPN desconectada. Tempo total hoje: $($TOTAL.ToString("hh\:mm"))"
-                }
-            }
         }
 
-        #Start-Sleep -Seconds 15
-        #Start-Sleep -Seconds 15 -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 2 -ErrorAction SilentlyContinue
+        if ($ELAPSED.TotalMinutes -ge 485 -and !$ALERTEND) {
 
-
+            Show-Alert "Voce esta proximo de 8h10.`nSugestao: desconectar a VPN." "VPN Monitor"
+            $ALERTEND = $true
+        }
     }
 
+    else {
 
+        if ($VPNCONNECTED) {
+
+            $VPNCONNECTED = $false
+            $NOTIFY.Icon = $ICONDISCONNECTED
+            $NOTIFY.Text = "VPN desconectada"
+
+            $NOTIFY.ShowBalloonTip(
+                4000,
+                "VPN",
+                "VPN desconectada",
+                [System.Windows.Forms.ToolTipIcon]::Info
+            )
+                
+            if (Test-Path $STARTFILE) {
+                try {
+                    $START = [datetime]::Parse((Get-Content $STARTFILE -First 1 -ErrorAction Stop))
+                }
+                catch {
+                    $START = Get-Date
+                }
+
+                $ELAPSED = (Get-Date) - $START
+
+                Write-VpnLog $START (Get-Date) $ELAPSED
+
+                Generate-VpnChart
+                if (Test-Path $CHARTFILE) {
+                    Send-TelegramPhoto $CHARTFILE
+                }
+
+                $TOTAL = Get-TotalTime
+                $TOTAL += $ELAPSED
+                Save-TotalTime $TOTAL
+
+                Save-DailyHistory $ELAPSED $TOTAL
+
+                Remove-Item $STARTFILE -ErrorAction SilentlyContinue
+
+                Send-TelegramMessage "VPN desconectada. Tempo total hoje: $($TOTAL.ToString("hh\:mm"))"
+            }
+        }
+    }
+
+    Start-Sleep -Seconds 2 -ErrorAction SilentlyContinue
+
+}
 
