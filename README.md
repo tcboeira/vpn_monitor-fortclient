@@ -137,6 +137,8 @@ O script é composto por diversas funções responsáveis por diferentes partes 
 | Show-LunchDialog | Exibe sugestão de pausa para almoço |
 | Show-Alert | Exibe mensagens de alerta ao usuário |
 | Generate-MonthReport | Calcula o total de horas de VPN por dia no mês atual e exporta para CSV. |
+| Save-State | Salva o estado atual da VPN, observando se for a primeira conexão do dia - ou não - e salvando em um arquivo JSON, para referência futura |
+| Get-State | Usada para ler o estado salvo da VPN a partir do arquivo JSON e determinar se é a primeira conexão do dia ou não. |
 
 ---
 
@@ -229,4 +231,4 @@ Thiago Boeira
 - GitHub: https://github.com/tcboeira
 - Email: tcboeira@gmail.com
 
-Versão atual: **0.10d**
+Versão atual: **0.12d**

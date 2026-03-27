@@ -38,16 +38,16 @@ Funções internas do script:
 
 .NOTES
     Autor: Thiago Boeira
-    Versão: 0.11.1d
+    Versão: 0.12d
     Data: 2026
 #>
 
 <#
 	Nome: vpn-monitor_002.ps1
 	Data: 05/03/2026 - 14h21
-    Última revisão: 26/03/2026 - 9h
+    Última revisão: 27/03/2026 - 9h15
 
-	Versão: 0.11.1d
+	Versão: 0.12d
 	Criado: Thiago Boeira
 			tcboeira@gmail.com
 		
@@ -68,6 +68,9 @@ Funções internas do script:
 	#
 	Versão // Data - Hora // Alteração-Descrição
 
+   0.12d // 27/03/2026 - 9h15 // - Incremento de funções que melhora o controle de reconexão da VPN, para evitar que o script herde um tempo antigo caso seja reiniciado ou haja uma interrupção, verificando o timestamp da última execução e resetando o contador se necessário.;
+                                 - Melhora do alerta de reconexão para diferenciar entre início do dia e reconexões ao longo do dia, enviando mensagens distintas ao Telegram para cada caso.
+  
    0.11.1d // 26/03/2026 - 9h // - Aperfeiçoamento das correções e ajustes da versão 0.11d;
     
    0.11d // 25/03/2026 - 12h25 // - Correção da captura de tempo conectado para evitar erros de leitura e cálculo do tempo total diário;
@@ -178,6 +181,8 @@ Funções internas do script:
     $LOGFILE = "$BASEPATH\vpn-log.csv"
     $CHARTFILE = "$BASEPATH\vpn-chart.png"
 
+    $STATEFILE = "$BASEPATH\vpn-state.json"
+
 
 ########################################################################################
 # VARIÁVEIS DE CONTROLE
@@ -189,6 +194,7 @@ Funções internas do script:
     $LASTDAY = (Get-Date).Date
     $LASTVPNSTATE = $false
     $MANUALDISCONNECT = $false
+
 
 ########################################################################################
 # Trecho adicionado para evitar que o script herde um tempo antigo caso seja reiniciado ou haja uma interrupção, verificando o timestamp da última execução e resetando o contador se necessário.
@@ -210,11 +216,11 @@ Funções internas do script:
         }
     }
 
-# Atualiza timestamp da execução atual
-(Get-Date) | Set-Content $LASTRUNFILE
+    # Atualiza timestamp da execução atual
+    (Get-Date) | Set-Content $LASTRUNFILE
 
-# Marca início do script (proteção anti-trigger imediato)
-$SCRIPTSTART = Get-Date
+    # Marca início do script (proteção anti-trigger imediato)
+    $SCRIPTSTART = Get-Date
 
 
 #####################################
@@ -225,90 +231,124 @@ $SCRIPTSTART = Get-Date
 
     ########################################################################################
     # Função para enviar mensagens via Telegram
-    function Send-TelegramMessage($TEXT) {
-        $TOKEN = "MEUTOKEN"
-        $CHATID = "MEUID"
+	 function Send-TelegramMessage($TEXT) {
 
-        $BODY = "chat_id=$CHATID&text=$TEXT"
+			$TOKEN = "MEUTOKEN"
+			$CHATID = "MEUID"
 
-        $BYTES = [System.Text.Encoding]::UTF8.GetBytes($BODY)
+		try {
+			Invoke-RestMethod `
+				-Uri "https://api.telegram.org/bot$TOKEN/sendMessage" `
+				-Method Post `
+				-Body @{
+					chat_id = $CHATID
+					text    = $TEXT
+				} `
+				-ContentType "application/x-www-form-urlencoded" `
+				-TimeoutSec 5 | Out-Null
+		}
+		catch {
+			Write-Host "Erro ao enviar mensagem Telegram"
+		}
+	}
+
+
+	########################################################################################
+	# Função para enviar imagens da conexão/dia ao Telegram
+	function Send-TelegramPhoto($FILE) {
+
+			$TOKEN = "MEUTOKEN"
+			$CHATID = "MEUID"
+
+		if (!(Test-Path $FILE)) { return }
+
+		try {
+			Invoke-RestMethod `
+				-Uri "https://api.telegram.org/bot$TOKEN/sendPhoto" `
+				-Method Post `
+				-Form @{
+				chat_id = $CHATID
+				photo   = Get-Item $FILE
+			} `
+				-TimeoutSec 10 | Out-Null
+		}
+		catch {
+			Write-Host "Erro ao enviar foto Telegram"
+		}
+	}
+
+	########################################################################################
+	# Função para salvar o estado atual da VPN (se é a primeira conexão do dia ou não) em um arquivo JSON, para referência futura.
+    function Save-State($IsFirstConnectionDone, $LastConnectionTime) {
+
+        $OBJ = @{
+            Date = (Get-Date).ToString("yyyy-MM-dd")
+            FirstConnectionDone = $IsFirstConnectionDone
+            LastConnectionTime = $LastConnectionTime
+            User = $env:USERNAME
+            Computer = $env:COMPUTERNAME
+        }
+
+        $OBJ | ConvertTo-Json | Set-Content $STATEFILE
+    }
+
+	########################################################################################
+	# Função para ler o estado salvo da VPN a partir do arquivo JSON e determinar se é a primeira conexão do dia ou não, retornando um valor booleano.
+    function Get-State {
+
+        if (!(Test-Path $STATEFILE)) {
+            return $false
+        }
 
         try {
-            Invoke-RestMethod `
-                -Uri "https://api.telegram.org/bot$TOKEN/sendMessage" `
-                -Method Post `
-                -Body $BYTES `
-                -ContentType "application/x-www-form-urlencoded" `
-                -TimeoutSec 5 | Out-Null
+            $DATA = Get-Content $STATEFILE -Raw | ConvertFrom-Json
+
+            if ($DATA.Date -ne (Get-Date).ToString("yyyy-MM-dd")) {
+                return $false
+            }
+
+            return $DATA.FirstConnectionDone
         }
         catch {
-            Write-Host "Erro ao enviar mensagem Telegram"
+            return $false
         }
     }
 
+	########################################################################################
+	# Função para desconectar a VPN 
+	function Disconnect-VPN {
 
-########################################################################################
-# Função para enviar imagens da conexão/dia ao Telegram
-function Send-TelegramPhoto($FILE) {
+		$VPN = Get-NetAdapter | Where-Object {
+			($_.Name -like "*Fortinet*" -or $_.InterfaceDescription -like $ADAPTERPATTERN) `
+				-and $_.Status -eq "Up"
+		}
 
-        $TOKEN = "MEUTOKEN"
-        $CHATID = "MEUID"
+		if ($VPN) {
+			Disable-NetAdapter -Name $VPN.Name -Confirm:$false
+		}
+	}
 
-    if (!(Test-Path $FILE)) { return }
+	########################################################################################
+	# Função de exibição de tela proximo ao almoço
+	function Show-LunchDialog {
 
-    try {
-        Invoke-RestMethod `
-            -Uri "https://api.telegram.org/bot$TOKEN/sendPhoto" `
-            -Method Post `
-            -Form @{
-            chat_id = $CHATID
-            photo   = Get-Item $FILE
-        } `
-            -TimeoutSec 10 | Out-Null
-    }
-    catch {
-        Write-Host "Erro ao enviar foto Telegram"
-    }
-}
+		$RESULT = [System.Windows.Forms.MessageBox]::Show(
+			"Já são 12h.`n`nHorário de almoço.`nDeseja desconectar a VPN agora?",
+			"VPN Monitor",
+			[System.Windows.Forms.MessageBoxButtons]::YesNo,
+			[System.Windows.Forms.MessageBoxIcon]::Question
+		)
 
+		if ($RESULT -eq "Yes") {
 
-########################################################################################
-# Função para desconectar a VPN 
-function Disconnect-VPN {
-
-    $VPN = Get-NetAdapter | Where-Object {
-        ($_.Name -like "*Fortinet*" -or $_.InterfaceDescription -like $ADAPTERPATTERN) `
-            -and $_.Status -eq "Up"
-    }
-
-    if ($VPN) {
-        Disable-NetAdapter -Name $VPN.Name -Confirm:$false
-    }
-}
-
-
-########################################################################################
-# Função de exibição de tela proximo ao almoço
-function Show-LunchDialog {
-
-    $RESULT = [System.Windows.Forms.MessageBox]::Show(
-        "Já são 12h.`n`nHorário de almoço.`nDeseja desconectar a VPN agora?",
-        "VPN Monitor",
-        [System.Windows.Forms.MessageBoxButtons]::YesNo,
-        [System.Windows.Forms.MessageBoxIcon]::Question
-    )
-
-    if ($RESULT -eq "Yes") {
-
-        $global:MANUALDISCONNECT = $true
-        Disconnect-VPN
-        Start-Sleep -Seconds 3
+			$global:MANUALDISCONNECT = $true
+			Disconnect-VPN
+			Start-Sleep -Seconds 3
 
 
 
-    }
-}
-
+		}
+	}
 
     ########################################################################################
     # Função para registrar sessão de uso da VPN em um arquivo CSV ($LOGFILE), 
@@ -328,13 +368,11 @@ function Show-LunchDialog {
         }
     }
 
-
     ###############################################################################################################
     # Função para exibir uma janela de alerta (MessageBox) ao usuário com uma mensagem ($MSG) e um título ($TITLE).
     function Show-Alert($MSG, $TITLE) {
         [System.Windows.Forms.MessageBox]::Show($MSG, $TITLE)
     }
-
 
     ############################################################################################################################
     # Função para ler do arquivo ($TOTALFILE) o tempo total acumulado de uso da VPN no dia e retorná-lo como um objeto TimeSpan.
@@ -354,7 +392,6 @@ function Show-LunchDialog {
         return New-TimeSpan
     }
 
-
     ###############################################################################################################
     # Função para salvar no arquivo ($TOTALFILE) o tempo total acumulado de uso da VPN no dia, no formato TimeSpan.
     function Save-TotalTime($TS) {
@@ -365,7 +402,6 @@ function Show-LunchDialog {
 
         $OBJ | ConvertTo-Json | Set-Content $TOTALFILE -Encoding UTF8
     }
-
 
     ########################################################################################
     # Função para criar um ícone 16x16 com texto dinâmico ($TEXT) para exibição no systray.
@@ -391,7 +427,6 @@ function Show-LunchDialog {
 
         return $ICON
     }
-
 
     #################################################
     # Gera um gráfico PNG com as horas de VPN por dia
@@ -447,7 +482,6 @@ function Show-LunchDialog {
         $CHART.SaveImage($CHARTFILE, "Png")
     }
 
-
     ########################################################################################
     # Função que calcula o total de horas de VPN por dia no mês atual e exporta para CSV.
     function Generate-MonthReport {
@@ -483,7 +517,6 @@ function Show-LunchDialog {
         $GROUP | Export-Csv "$BASEPATH\vpn-month-report.csv" -NoTypeInformation -Encoding UTF8
     }
 
-
     ######################################################################################################################################
     # Função que salva o histórico diário de sessões de VPN em um arquivo CSV, incluindo data, duração da sessão e total acumulado no dia.
     function Save-DailyHistory($SESSION, $TOTAL) {
@@ -503,7 +536,6 @@ function Show-LunchDialog {
         }
     }
 
-
 ############################################
 ############################################
 # ^ FIM DA ÁREA DE DECLARAÇÃO DE FUNÇÕES ^ #
@@ -522,7 +554,6 @@ function Show-LunchDialog {
 
     $NOTIFY.Icon = $ICONDISCONNECTED
     $NOTIFY.Text = "VPN Monitor"
-
 
     ########################################################################################
     # MENU de opções ao clicar com o botão direito no ícone do systray
@@ -609,6 +640,8 @@ while ($true) {
         Generate-MonthReport
         Generate-VpnChart
         Remove-Item $TOTALFILE -ErrorAction SilentlyContinue
+        
+        Save-State $false
 
         $ALERTMAXHOURS = $false
         $ALERTLUNCH = $false
@@ -629,15 +662,23 @@ while ($true) {
     # DETECÇÃO DE MUDANÇA DE ESTADO 
     # =========================
     if ($LASTVPNSTATE -and -not $CURRENTSTATE) {
-
-        if (-not $MANUALDISCONNECT) {
-            Send-TelegramMessage "⚠️ VPN caiu inesperadamente!"
+        if (-not $MANUALDISCONNECT -and ((Get-Date) - $SCRIPTSTART).TotalMinutes -gt 1) {
+            Send-TelegramMessage "VPN caiu inesperadamente!"
         }
         $MANUALDISCONNECT = $false
     }
 
-    if (-not $LASTVPNSTATE -and $CURRENTSTATE) {
-        Send-TelegramMessage "🔄 VPN reconectada`nUsuário: $env:USERNAME`nComputador: $env:COMPUTERNAME`nHora: $(Get-Date -Format HH:mm)"
+	if (-not $LASTVPNSTATE -and $CURRENTSTATE){
+        $TOTAL = Get-TotalTime
+        $ALREADYCONNECTEDTODAY = Get-State
+
+        if (-not $ALREADYCONNECTEDTODAY) {
+                Send-TelegramMessage "VPN conectada (início do dia)`nUsuário: $env:USERNAME`nComputador: $env:COMPUTERNAME`nHora: $(Get-Date -Format HH:mm)"
+                Save-State -IsFirstConnectionDone $true -LastConnectionTime (Get-Date)
+            } else {
+                Send-TelegramMessage "VPN reconectada`nUsuário: $env:USERNAME`nComputador: $env:COMPUTERNAME`nHora: $(Get-Date -Format HH:mm)"
+                Save-State -IsFirstConnectionDone $true -LastConnectionTime (Get-Date)
+        }
     }
 
     $LASTVPNSTATE = $CURRENTSTATE
@@ -654,10 +695,6 @@ while ($true) {
             }
 
             $ALERTMAXHOURS = $false
-
-            if (-not (Test-Path $TOTALFILE)) {
-                Send-TelegramMessage "🟢 VPN conectada (início do dia)`nUsuário: $env:USERNAME`nComputador: $env:COMPUTERNAME`nHora: $(Get-Date -Format HH:mm)"
-            }
 
             $VPNCONNECTED = $true
             $ALERTLUNCH = $false
@@ -717,18 +754,14 @@ while ($true) {
 
 
         $HOURS = [int]$ELAPSED.TotalHours
-
         $NOTIFY.Icon = New-TimeIcon("$HOURS")
-
         $NOTIFY.Text = "VPN: $($ELAPSED.ToString("hh\:mm")) | Total hoje: $($TOTALDAY.ToString("hh\:mm"))"
 
         if ($ELAPSED.TotalMinutes -ge 240 -and !$ALERTLUNCH) {
-                
             Show-Alert "Voce esta perto de 4h de conexao.`nHora de pausa para almoço." "VPN Monitor"
             $ALERTLUNCH = $true
 
             Send-TelegramMessage "VPN Monitor: você está próximo de 4h de conexão. Hora de pausa."
-
         }
 
         if ($ELAPSED.TotalMinutes -ge 485 -and !$ALERTEND) {
@@ -786,4 +819,6 @@ while ($true) {
     Start-Sleep -Seconds 2 -ErrorAction SilentlyContinue
 
 }
+
+
 
