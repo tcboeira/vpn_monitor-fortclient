@@ -139,6 +139,12 @@ O script é composto por diversas funções responsáveis por diferentes partes 
 | Generate-MonthReport | Calcula o total de horas de VPN por dia no mês atual e exporta para CSV. |
 | Save-State | Salva o estado atual da VPN, observando se for a primeira conexão do dia - ou não - e salvando em um arquivo JSON, para referência futura |
 | Get-State | Usada para ler o estado salvo da VPN a partir do arquivo JSON e determinar se é a primeira conexão do dia ou não. |
+| Save-DailyHistory | Salva o histórico diário de sessões de VPN em um arquivo CSV, incluindo data, duração da sessão e total acumulado no dia. |
+| Close-Day | Função que registra o fechamento do dia. |
+| Get-Config | Garante um uso adequado para os Tokens para Bot do Telegram. |
+| Normalize-Version | Normaliza versões para o formato padrão (ex: 1.0 → 1.0.0) permitindo comparação correta. |
+| Should-CheckUpdate | Verifica se já passou o intervalo definido (3 horas) desde a última checagem de atualização. |
+| Check-ForUpdate | Consulta a versão remota no GitHub, compara com a versão local e, se houver atualização, notifica o usuário e abre o link para download. |
 
 ---
 
@@ -231,4 +237,4 @@ Thiago Boeira
 - GitHub: https://github.com/tcboeira
 - Email: tcboeira@gmail.com
 
-Versão atual: **0.12d**
+Versão atual: **1.0.0**

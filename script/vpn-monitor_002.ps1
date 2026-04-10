@@ -38,16 +38,16 @@ Funções internas do script:
 
 .NOTES
     Autor: Thiago Boeira
-    Versão: 0.12d
+    Versão: 1.0.0
     Data: 2026
 #>
 
 <#
 	Nome: vpn-monitor_002.ps1
 	Data: 05/03/2026 - 14h21
-    Última revisão: 27/03/2026 - 9h15
+    Última revisão: 10/04/2026 - 9h15
 
-	Versão: 0.12d
+	Versão: 1.0.0
 	Criado: Thiago Boeira
 			tcboeira@gmail.com
 		
@@ -68,6 +68,11 @@ Funções internas do script:
 	#
 	Versão // Data - Hora // Alteração-Descrição
 
+   1.0.0 // 10/04/2026 - 9h15 // - Corrigido e melhorado versões para coleta de dados do dia e envio de imagens/relatorios do dia;
+                                 - Melhora quanto ao uso do token no que toca uso do Bot do Telegram
+                                 - Incluso AUTO Update;
+                                 - Tornado versão de produção
+   
    0.12d // 27/03/2026 - 9h15 // - Incremento de funções que melhora o controle de reconexão da VPN, para evitar que o script herde um tempo antigo caso seja reiniciado ou haja uma interrupção, verificando o timestamp da última execução e resetando o contador se necessário.;
                                  - Melhora do alerta de reconexão para diferenciar entre início do dia e reconexões ao longo do dia, enviando mensagens distintas ao Telegram para cada caso.
   
@@ -233,8 +238,9 @@ Funções internas do script:
     # Função para enviar mensagens via Telegram
 	 function Send-TelegramMessage($TEXT) {
 
-			$TOKEN = "MEUTOKEN"
-			$CHATID = "MEUID"
+        $CONFIG = Get-Config
+        $TOKEN = $CONFIG.TelegramToken
+        $CHATID = $CONFIG.ChatId
 
 		try {
 			Invoke-RestMethod `
@@ -257,8 +263,9 @@ Funções internas do script:
 	# Função para enviar imagens da conexão/dia ao Telegram
 	function Send-TelegramPhoto($FILE) {
 
-			$TOKEN = "MEUTOKEN"
-			$CHATID = "MEUID"
+    $CONFIG = Get-Config
+    $TOKEN = $CONFIG.TelegramToken
+    $CHATID = $CONFIG.ChatId
 
 		if (!(Test-Path $FILE)) { return }
 
@@ -377,20 +384,26 @@ Funções internas do script:
     ############################################################################################################################
     # Função para ler do arquivo ($TOTALFILE) o tempo total acumulado de uso da VPN no dia e retorná-lo como um objeto TimeSpan.
     function Get-TotalTime {
-        if (Test-Path $TOTALFILE) {
-            try {
-                $CONTENT = Get-Content $TOTALFILE -Raw | ConvertFrom-Json
-                if ($CONTENT.Date -ne (Get-Date).ToString("yyyy-MM-dd")) {
-                    return New-TimeSpan
-                }
-                return [timespan]::Parse($CONTENT.Total)
-            }
-            catch {
+        if (!(Test-Path $TOTALFILE)) {
+            return New-TimeSpan
+        }
+
+        try {
+            $CONTENT = Get-Content $TOTALFILE -Raw | ConvertFrom-Json
+            $TODAY = (Get-Date).ToString("yyyy-MM-dd")
+
+            if ($CONTENT.Date -ne $TODAY) {
+                # RESET automático se for outro dia
                 return New-TimeSpan
             }
+
+            return [timespan]::Parse($CONTENT.Total)
         }
-        return New-TimeSpan
+        catch {
+            return New-TimeSpan
+        }
     }
+
 
     ###############################################################################################################
     # Função para salvar no arquivo ($TOTALFILE) o tempo total acumulado de uso da VPN no dia, no formato TimeSpan.
@@ -536,11 +549,133 @@ Funções internas do script:
         }
     }
 
+    ##################################
+    # Funão para de fechamento do dia
+    function Close-Day {
+        Generate-VpnChart
+
+        if (Test-Path $CHARTFILE) {
+            Send-TelegramPhoto $CHARTFILE
+        }
+
+        $TOTAL = Get-TotalTime
+
+        Send-TelegramMessage "Resumo do dia:`nTempo total: $($TOTAL.ToString("hh\:mm"))"
+    }
+
+
+    ##################################
+    # Funão correção quanto ao uso dos Tokens
+    function Get-Config {
+        $CONFIGFILE = "$BASEPATH\config.json"
+        if (!(Test-Path $CONFIGFILE)) {
+            throw "Arquivo de configuração não encontrado!"
+        }
+        return Get-Content $CONFIGFILE -Raw | ConvertFrom-Json
+    }
+
+
 ############################################
 ############################################
 # ^ FIM DA ÁREA DE DECLARAÇÃO DE FUNÇÕES ^ #
 ############################################
 ############################################
+
+###########################################
+###########################################
+# v FUNÇÕES EXCLUSIVAS PARA AUTO UPDATE v #
+###########################################
+###########################################
+
+    $SCRIPT_VERSION = "1.0.0"
+    $UPDATECHECKFILE = "$BASEPATH\last-update-check.txt"
+    $VERSION_URL = "https://raw.githubusercontent.com/tcboeira/vpn_monitor-fortclient/main/version.json"
+
+    # Função para normalizar versões para o formato padrão (ex: 1.0 → 1.0.0) permitindo comparação correta entre versões
+    function Normalize-Version($v) {
+        $parts = $v.ToString().Trim().Split('.')
+        while ($parts.Count -lt 3) { $parts += "0" }
+        return ($parts -join '.')
+    }
+
+    # Função para Verifica se já passou o intervalo definido (3 horas) desde a última checagem de atualização
+    function Should-CheckUpdate {
+
+        if (!(Test-Path $UPDATECHECKFILE)) {
+            return $true
+        }
+
+        try {
+            $LAST = Get-Content $UPDATECHECKFILE | Get-Date
+
+            # 🔥 ALTERADO PARA 3 HORAS
+            if ((Get-Date) - $LAST -gt (New-TimeSpan -Hours 3)) {
+                return $true
+            }
+        }
+        catch {
+            return $true
+        }
+
+        return $false
+    }
+
+    # Função que consulta a versão remota no GitHub, compara com a versão local e, se houver atualização, notifica o usuário e abre o link para download.
+    function Check-ForUpdate {
+
+        try {
+            $REMOTE = Invoke-RestMethod -Uri $VERSION_URL -TimeoutSec 5
+
+            if (-not $REMOTE.version) { return }
+
+            $REMOTE_VERSION = Normalize-Version $REMOTE.version
+            $LOCAL_VERSION  = Normalize-Version $SCRIPT_VERSION
+
+            if ([version]$REMOTE_VERSION -gt [version]$LOCAL_VERSION) {
+
+                $MSG = "Nova versão disponível: $REMOTE_VERSION`nVersão atual: $LOCAL_VERSION`n`nDeseja atualizar agora?"
+
+                $RESULT = [System.Windows.Forms.MessageBox]::Show(
+                    $MSG,
+                    "Atualização disponível",
+                    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                )
+
+            if ($RESULT -eq "Yes" -and $REMOTE.download -and $REMOTE.download -like "http*") {
+                Start-Process $REMOTE.download
+                exit
+            }
+
+            }
+        }
+        catch {
+            # silencioso conforme padrão do script
+        }
+        finally {
+            (Get-Date) | Set-Content $UPDATECHECKFILE
+        }
+    }
+
+##########################################################
+##########################################################
+# ^ FIM DA ÁREA DE FUNÇÕES EXCLUSIVAS PARA AUTO UPDATE ^ #
+##########################################################
+##########################################################
+
+
+
+#######################################
+# EXECUTA AUTO UPDATE (execução única)
+#######################################
+    try {
+        if (Should-CheckUpdate) {
+            Check-ForUpdate
+        }
+    }
+    catch {
+        # silencioso
+    }
 
 
 ########################################################################################
@@ -636,9 +771,34 @@ while ($true) {
         $ALERTLUNCH = $true
     }
 
-    if ($CURRENTDAY -ne $LASTDAY) {
+if ($CURRENTDAY -ne $LASTDAY) {
+        # 🔴 FECHA SESSÃO SE AINDA ESTIVER CONECTADO
+        if ($VPNCONNECTED -and (Test-Path $STARTFILE)) {
+
+            try {
+                $START = [datetime]::Parse((Get-Content $STARTFILE -First 1))
+            }
+            catch {
+                $START = Get-Date
+            }
+
+            $ELAPSED = (Get-Date) - $START
+
+            Write-VpnLog $START (Get-Date) $ELAPSED
+
+            $TOTAL = Get-TotalTime
+            $TOTAL = [timespan]::FromSeconds($TOTAL.TotalSeconds + $ELAPSED.TotalSeconds)
+            Save-TotalTime $TOTAL
+
+            Save-DailyHistory $ELAPSED $TOTAL
+
+            Remove-Item $STARTFILE -ErrorAction SilentlyContinue
+        }
+
+        # 🟢 AGORA SIM: fecha o dia corretamente
+        Close-Day
+
         Generate-MonthReport
-        Generate-VpnChart
         Remove-Item $TOTALFILE -ErrorAction SilentlyContinue
         
         Save-State $false
@@ -649,6 +809,7 @@ while ($true) {
 
         $LASTDAY = $CURRENTDAY
     }
+
 
     $VPN = Get-NetAdapter | Where-Object {
         ($_.Name -like "*Fortinet*" -or $_.InterfaceDescription -like $ADAPTERPATTERN) `
@@ -689,10 +850,13 @@ while ($true) {
 		
             # Evita herdar tempo antigo após reconexão
             $TOTAL = Get-TotalTime
-            if ($TOTAL.TotalHours -ge 8) {
+
+            # proteção: nunca herdar lixo antigo
+            if ($TOTAL.TotalHours -ge 12) {
                 $TOTAL = New-TimeSpan
-                Save-TotalTime $TOTAL 
+                Save-TotalTime $TOTAL
             }
+
 
             $ALERTMAXHOURS = $false
 
@@ -730,7 +894,8 @@ while ($true) {
         $TOTAL = Get-TotalTime
 
         # ✔ cálculo correto do total do dia (sem salvar)
-        $TOTALDAY = $TOTAL + $ELAPSED
+       #$TOTALDAY = $TOTAL + $ELAPSED
+        $TOTALDAY = [timespan]::FromSeconds(($TOTAL.TotalSeconds + $ELAPSED.TotalSeconds))
 
         if (
             $TOTALDAY.TotalHours -ge 8 `
@@ -798,13 +963,8 @@ while ($true) {
 
                 Write-VpnLog $START (Get-Date) $ELAPSED
 
-                Generate-VpnChart
-                if (Test-Path $CHARTFILE) {
-                    Send-TelegramPhoto $CHARTFILE
-                }
-
                 $TOTAL = Get-TotalTime
-                $TOTAL += $ELAPSED
+                $TOTAL = [timespan]::FromSeconds($TOTAL.TotalSeconds + $ELAPSED.TotalSeconds)
                 Save-TotalTime $TOTAL
 
                 Save-DailyHistory $ELAPSED $TOTAL
