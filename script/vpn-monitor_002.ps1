@@ -589,7 +589,8 @@ Funções internas do script:
 
     $SCRIPT_VERSION = "1.0.0"
     $UPDATECHECKFILE = "$BASEPATH\last-update-check.txt"
-    $VERSION_URL = "https://raw.githubusercontent.com/tcboeira/vpn_monitor-fortclient/main/version.json"
+    $VERSION_URL = "https://raw.githubusercontent.com/tcboeira/vpn_monitor-fortclient/main/script/version.json"
+
 
     # Função para normalizar versões para o formato padrão (ex: 1.0 → 1.0.0) permitindo comparação correta entre versões
     function Normalize-Version($v) {
