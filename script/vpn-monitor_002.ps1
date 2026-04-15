@@ -38,16 +38,16 @@ Funções internas do script:
 
 .NOTES
     Autor: Thiago Boeira
-    Versão: 1.0.0
+    Versão: 1.1.0
     Data: 2026
 #>
 
 <#
 	Nome: vpn-monitor_002.ps1
 	Data: 05/03/2026 - 14h21
-    Última revisão: 10/04/2026 - 9h15
+    Última revisão: 15/04/2026 - 10h34
 
-	Versão: 1.0.0
+	Versão: 1.1.0
 	Criado: Thiago Boeira
 			tcboeira@gmail.com
 		
@@ -68,6 +68,10 @@ Funções internas do script:
 	#
 	Versão // Data - Hora // Alteração-Descrição
 
+   1.1.0 // 15/04/2026 - 10h34 // - Busca de correção no que toca envio de mensagens e controle de data/hora de conexão para controle;
+                                  - Remoção de funções obsoletas;
+                                  - Limpeza de linhas obsoletadas em ultimos refinos.   
+   
    1.0.0 // 10/04/2026 - 9h15 // - Corrigido e melhorado versões para coleta de dados do dia e envio de imagens/relatorios do dia;
                                  - Melhora quanto ao uso do token no que toca uso do Bot do Telegram
                                  - Incluso AUTO Update;
@@ -132,7 +136,6 @@ Funções internas do script:
 
 #>
 
-
 ########################################################################################
 # Informa qual versão do PowerShell é necessária para rodar este script e ativa o modo estrito para evitar erros comuns de codificação.
 ########################################################################################
@@ -182,11 +185,10 @@ Funções internas do script:
         }
 
     $STARTFILE = "$BASEPATH\vpn-start.txt"
-    $TOTALFILE = "$BASEPATH\vpn-total.txt"
     $LOGFILE = "$BASEPATH\vpn-log.csv"
     $CHARTFILE = "$BASEPATH\vpn-chart.png"
-
     $STATEFILE = "$BASEPATH\vpn-state.json"
+    $DAYFILE = "$BASEPATH\savedaydata.json"
 
 
 ########################################################################################
@@ -199,6 +201,7 @@ Funções internas do script:
     $LASTDAY = (Get-Date).Date
     $LASTVPNSTATE = $false
     $MANUALDISCONNECT = $false
+    $global:DAYDATA_CACHE = $null
 
 
 ########################################################################################
@@ -210,14 +213,9 @@ Funções internas do script:
         try {
             $LASTRUN = Get-Content $LASTRUNFILE | Get-Date
             $NOW = Get-Date
-
-            # Se passou muito tempo desde última execução → considera reboot/interrupção
-            if (($NOW - $LASTRUN).TotalMinutes -gt 10) {
-                Remove-Item $TOTALFILE -ErrorAction SilentlyContinue
-            }
         }
         catch {
-            Remove-Item $TOTALFILE -ErrorAction SilentlyContinue
+
         }
     }
 
@@ -242,20 +240,25 @@ Funções internas do script:
         $TOKEN = $CONFIG.TelegramToken
         $CHATID = $CONFIG.ChatId
 
-		try {
-			Invoke-RestMethod `
-				-Uri "https://api.telegram.org/bot$TOKEN/sendMessage" `
-				-Method Post `
-				-Body @{
-					chat_id = $CHATID
-					text    = $TEXT
-				} `
-				-ContentType "application/x-www-form-urlencoded" `
-				-TimeoutSec 5 | Out-Null
-		}
-		catch {
-			Write-Host "Erro ao enviar mensagem Telegram"
-		}
+            for ($i = 0; $i -lt 3; $i++) {
+                try {
+                    Invoke-RestMethod `
+                        -Uri "https://api.telegram.org/bot$TOKEN/sendMessage" `
+                        -Method Post `
+                        -Body @{
+                            chat_id = $CHATID
+                            text    = $TEXT
+                        } `
+                        -ContentType "application/x-www-form-urlencoded" `
+                        -TimeoutSec 5 | Out-Null
+
+                    break
+                }
+                catch {
+                    Start-Sleep -Seconds 2
+                }
+            }
+
 	}
 
 
@@ -269,19 +272,24 @@ Funções internas do script:
 
 		if (!(Test-Path $FILE)) { return }
 
-		try {
-			Invoke-RestMethod `
-				-Uri "https://api.telegram.org/bot$TOKEN/sendPhoto" `
-				-Method Post `
-				-Form @{
-				chat_id = $CHATID
-				photo   = Get-Item $FILE
-			} `
-				-TimeoutSec 10 | Out-Null
-		}
-		catch {
-			Write-Host "Erro ao enviar foto Telegram"
-		}
+        for ($i = 0; $i -lt 3; $i++) {
+            try {
+                Invoke-RestMethod `
+                    -Uri "https://api.telegram.org/bot$TOKEN/sendPhoto" `
+                    -Method Post `
+                    -Form @{
+                        chat_id = $CHATID
+                        photo   = Get-Item $FILE
+                    } `
+                    -TimeoutSec 10 | Out-Null
+
+                break
+            }
+            catch {
+                Start-Sleep -Seconds 2
+            }
+        }
+
 	}
 
 	########################################################################################
@@ -558,7 +566,8 @@ Funções internas do script:
             Send-TelegramPhoto $CHARTFILE
         }
 
-        $TOTAL = Get-TotalTime
+        #$TOTAL = Get-TotalTime
+        $TOTAL = Get-DayTotal
 
         Send-TelegramMessage "Resumo do dia:`nTempo total: $($TOTAL.ToString("hh\:mm"))"
     }
@@ -575,6 +584,99 @@ Funções internas do script:
     }
 
 
+    ##################################
+    # Função para carregar dados
+    function Get-DayData {
+
+   #if ($global:DAYDATA_CACHE) {
+    if ($null -ne $global:DAYDATA_CACHE) {
+
+        return $global:DAYDATA_CACHE
+    }
+
+    if (!(Test-Path $DAYFILE)) {
+        $global:DAYDATA_CACHE = @{}
+        return $global:DAYDATA_CACHE
+    }
+
+    $global:DAYDATA_CACHE = Get-Content $DAYFILE -Raw | ConvertFrom-Json
+    return $global:DAYDATA_CACHE
+    }
+
+
+    ##################################
+    # Função para salvar dados
+    function Save-DayData($DATA) {
+        $global:DAYDATA_CACHE = $DATA
+        $DATA | ConvertTo-Json -Depth 5 | Set-Content $DAYFILE
+    }
+
+
+    ####################################################################
+    # Função para monitorar iniciar a sessão de captura dos dados
+    function Start-Session {
+        $DATA = Get-DayData
+        $TODAY = (Get-Date).ToString("yyyy-MM-dd")
+
+        if (-not $DATA.$TODAY) {
+            $DATA | Add-Member -Name $TODAY -Value @() -MemberType NoteProperty
+        }
+
+        $DATA.$TODAY += @{
+            start = (Get-Date)
+            end   = $null
+        }
+
+        Save-DayData $DATA
+    }
+
+    ####################################################################
+    # Função para encerrar  monitoria de sessão de captura dos dados
+    function End-Session {
+        $DATA = Get-DayData
+        $TODAY = (Get-Date).ToString("yyyy-MM-dd")
+
+        if ($DATA.$TODAY) {
+            $LAST = $DATA.$TODAY[-1]
+            if (-not $LAST.end) {
+                $LAST.end = Get-Date
+            }
+        }
+
+        Save-DayData $DATA
+    }
+
+
+    ####################################################################
+    # Função para calcular a totalidade do tempo de conexão
+    function Get-DayTotal {
+        $DATA = Get-DayData
+        $TODAY = (Get-Date).ToString("yyyy-MM-dd")
+
+        $TOTAL = New-TimeSpan
+        $NOW = Get-Date
+
+        foreach ($S in $DATA.$TODAY) {
+            if ($S.end) {
+                $TOTAL += ([datetime]$S.end - [datetime]$S.start)
+            }
+            else {
+                if ($ISVPNUP) {
+                    # VPN ainda ativa → continua contando
+                    $TOTAL += ($NOW - [datetime]$S.start)
+                }
+                else {
+                    # VPN não está ativa → ignora sessão aberta "fantasma"
+                    continue
+                }
+            }
+
+        }
+
+        return $TOTAL
+    }
+
+
 ############################################
 ############################################
 # ^ FIM DA ÁREA DE DECLARAÇÃO DE FUNÇÕES ^ #
@@ -587,10 +689,9 @@ Funções internas do script:
 ###########################################
 ###########################################
 
-    $SCRIPT_VERSION = "1.0.0"
+    $SCRIPT_VERSION = "1.1.0"
     $UPDATECHECKFILE = "$BASEPATH\last-update-check.txt"
     $VERSION_URL = "https://raw.githubusercontent.com/tcboeira/vpn_monitor-fortclient/main/script/version.json"
-
 
     # Função para normalizar versões para o formato padrão (ex: 1.0 → 1.0.0) permitindo comparação correta entre versões
     function Normalize-Version($v) {
@@ -664,8 +765,6 @@ Funções internas do script:
 ##########################################################
 ##########################################################
 
-
-
 #######################################
 # EXECUTA AUTO UPDATE (execução única)
 #######################################
@@ -717,50 +816,43 @@ Funções internas do script:
     ########################################################################################
     # Eventos dos itens do menu do Systray
         $ITEMSHOW.Add_Click({
-
-                $TOTAL = Get-TotalTime
-
+                $TOTAL = Get-DayTotal
                 [System.Windows.Forms.MessageBox]::Show(
                     "Tempo total hoje: $($TOTAL.ToString("hh\:mm"))",
                     "VPN Monitor"
                 )
-
             })
 
         $ITEMRESET.Add_Click({
-
-                Remove-Item $TOTALFILE -ErrorAction SilentlyContinue
-
                 [System.Windows.Forms.MessageBox]::Show(
                     "Contador resetado.",
                     "VPN Monitor"
                 )
-
             })
 
         $ITEMCHART.Add_Click({
-
                 Generate-VpnChart
-
                 if (Test-Path $CHARTFILE) {
                     Start-Process $CHARTFILE
                 }
-
             })
 
-        $ITEMEXIT.Add_Click({
-
-                $NOTIFY.Visible = $false
-                $NOTIFY.Dispose()
-                exit
-
-            })
+       $ITEMEXIT.Add_Click({
+            $NOTIFY.Visible = $false
+            $NOTIFY.Dispose()
+            if ($MUTEX) {
+                $MUTEX.ReleaseMutex()
+            }
+            $RUNNING = $false
+        })
 
 
 ########################################################################################
 # LOOP PRINCIPAL
 ########################################################################################
-while ($true) {
+    $RUNNING = $true
+    while ($RUNNING) {
+
 
     # Verifica se é meio-dia para sugerir pausa para almoço
     $NOW = Get-Date
@@ -772,57 +864,58 @@ while ($true) {
         $ALERTLUNCH = $true
     }
 
-if ($CURRENTDAY -ne $LASTDAY) {
-        # 🔴 FECHA SESSÃO SE AINDA ESTIVER CONECTADO
-        if ($VPNCONNECTED -and (Test-Path $STARTFILE)) {
+    if ($CURRENTDAY -ne $LASTDAY) {
+            # 🔴 FECHA SESSÃO SE AINDA ESTIVER CONECTADO
+            if ($VPNCONNECTED -and (Test-Path $STARTFILE)) {
 
-            try {
-                $START = [datetime]::Parse((Get-Content $STARTFILE -First 1))
+                try {
+                    $START = [datetime]::Parse((Get-Content $STARTFILE -First 1))
+                }
+                catch {
+                    $START = Get-Date
+                }
+
+
+                $ELAPSED = (Get-Date) - $START
+                Write-VpnLog $START (Get-Date) $ELAPSED
+
+                End-Session
+
+                $TOTALDAY = [timespan]::FromSeconds(
+                    (Get-DayTotal).TotalSeconds + $ELAPSED.TotalSeconds
+                )
+
+                Save-DailyHistory $ELAPSED $TOTALDAY
+
+                Remove-Item $STARTFILE -ErrorAction SilentlyContinue
+
+                $TOTALFINAL = Get-DayTotal
+                Send-TelegramMessage "VPN desconectada. Tempo total hoje: $($TOTALFINAL.ToString("hh\:mm"))"
+
             }
-            catch {
-                $START = Get-Date
-            }
 
-            $ELAPSED = (Get-Date) - $START
+            # Fecha o dia corretamente
+            Close-Day
+            Generate-MonthReport
+           
+            Save-State -IsFirstConnectionDone $false -LastConnectionTime $null
 
-            Write-VpnLog $START (Get-Date) $ELAPSED
+            $ALERTMAXHOURS = $false
+            $ALERTLUNCH = $false
+            $ALERTEND = $false
 
-            $TOTAL = Get-TotalTime
-            $TOTAL = [timespan]::FromSeconds($TOTAL.TotalSeconds + $ELAPSED.TotalSeconds)
-            Save-TotalTime $TOTAL
-
-            Save-DailyHistory $ELAPSED $TOTAL
-
-            Remove-Item $STARTFILE -ErrorAction SilentlyContinue
+            $LASTDAY = $CURRENTDAY
         }
 
-        # 🟢 AGORA SIM: fecha o dia corretamente
-        Close-Day
+        $VPN = Get-NetAdapter | Where-Object {
+            ($_.Name -like "*Fortinet*" -or $_.InterfaceDescription -like $ADAPTERPATTERN) `
+                -and $_.Status -eq "Up"
+        }
 
-        Generate-MonthReport
-        Remove-Item $TOTALFILE -ErrorAction SilentlyContinue
-        
-        Save-State $false
+        $CURRENTSTATE = [bool]$VPN
 
-        $ALERTMAXHOURS = $false
-        $ALERTLUNCH = $false
-        $ALERTEND = $false
-
-        $LASTDAY = $CURRENTDAY
-    }
-
-
-    $VPN = Get-NetAdapter | Where-Object {
-        ($_.Name -like "*Fortinet*" -or $_.InterfaceDescription -like $ADAPTERPATTERN) `
-            -and $_.Status -eq "Up"
-    }
-
-    $CURRENTSTATE = [bool]$VPN
-
-
-    # =========================
-    # DETECÇÃO DE MUDANÇA DE ESTADO 
-    # =========================
+    ###########################
+    # Detecta mudança de Estado 
     if ($LASTVPNSTATE -and -not $CURRENTSTATE) {
         if (-not $MANUALDISCONNECT -and ((Get-Date) - $SCRIPTSTART).TotalMinutes -gt 1) {
             Send-TelegramMessage "VPN caiu inesperadamente!"
@@ -831,7 +924,8 @@ if ($CURRENTDAY -ne $LASTDAY) {
     }
 
 	if (-not $LASTVPNSTATE -and $CURRENTSTATE){
-        $TOTAL = Get-TotalTime
+        $TOTAL = Get-DayTotal
+
         $ALREADYCONNECTEDTODAY = Get-State
 
         if (-not $ALREADYCONNECTEDTODAY) {
@@ -844,29 +938,38 @@ if ($CURRENTDAY -ne $LASTDAY) {
     }
 
     $LASTVPNSTATE = $CURRENTSTATE
-
     if ($VPN) {
-
         if (-not $VPNCONNECTED) {
-		
-            # Evita herdar tempo antigo após reconexão
-            $TOTAL = Get-TotalTime
+            
+            # 🔥 Trata reconexão / reboot sem perder sessão
+            if (Test-Path $STARTFILE) {
+                try {
+                    $START = [datetime]::Parse((Get-Content $STARTFILE -First 1))
+                }
+                catch {
+                    $START = Get-Date
+                    $START.ToString("yyyy-MM-dd HH:mm:ss") | Set-Content $STARTFILE -Encoding UTF8
+                }
+            }
+            else {
+                $START = Get-Date
+                $START.ToString("yyyy-MM-dd HH:mm:ss") | Set-Content $STARTFILE -Encoding UTF8
 
-            # proteção: nunca herdar lixo antigo
-            if ($TOTAL.TotalHours -ge 12) {
-                $TOTAL = New-TimeSpan
-                Save-TotalTime $TOTAL
+                # Só cria sessão nova se NÃO existia arquivo
+                Start-Session
             }
 
+            $TOTAL = Get-DayTotal
+
+            # Proteção: nunca herdar lixo antigo
+            if ($TOTAL.TotalHours -ge 12) {
+                $TOTAL = New-TimeSpan
+            }
 
             $ALERTMAXHOURS = $false
-
             $VPNCONNECTED = $true
             $ALERTLUNCH = $false
             $ALERTEND = $false
-
-            $START = Get-Date
-            $START.ToString("yyyy-MM-dd HH:mm:ss") | Set-Content $STARTFILE -Encoding UTF8
 
             $NOTIFY.Icon = $ICONCONNECTED
 
@@ -892,10 +995,9 @@ if ($CURRENTDAY -ne $LASTDAY) {
         }
 
         $ELAPSED = (Get-Date) - $START
-        $TOTAL = Get-TotalTime
+        $TOTAL = Get-DayTotal
 
-        # ✔ cálculo correto do total do dia (sem salvar)
-       #$TOTALDAY = $TOTAL + $ELAPSED
+        # Cálculo correto do total do dia
         $TOTALDAY = [timespan]::FromSeconds(($TOTAL.TotalSeconds + $ELAPSED.TotalSeconds))
 
         if (
@@ -904,7 +1006,6 @@ if ($CURRENTDAY -ne $LASTDAY) {
                 -and ((Get-Date) - $SCRIPTSTART).TotalMinutes -gt 2
         ) {
 
-
             $ALERTMAXHOURS = $true
 
             Show-Alert `
@@ -912,12 +1013,11 @@ if ($CURRENTDAY -ne $LASTDAY) {
                 "VPN Monitor"
 
             Send-TelegramMessage "VPN Monitor: limite de 8h atingido. VPN foi desconectada automaticamente."
+
             $global:MANUALDISCONNECT = $true
             Disconnect-VPN
             Start-Sleep -Seconds 3
-
         }
-
 
         $HOURS = [int]$ELAPSED.TotalHours
         $NOTIFY.Icon = New-TimeIcon("$HOURS")
@@ -931,7 +1031,6 @@ if ($CURRENTDAY -ne $LASTDAY) {
         }
 
         if ($ELAPSED.TotalMinutes -ge 485 -and !$ALERTEND) {
-
             Show-Alert "Voce esta proximo de 8h10.`nSugestao: desconectar a VPN." "VPN Monitor"
             $ALERTEND = $true
         }
@@ -961,18 +1060,24 @@ if ($CURRENTDAY -ne $LASTDAY) {
                 }
 
                 $ELAPSED = (Get-Date) - $START
-
                 Write-VpnLog $START (Get-Date) $ELAPSED
 
-                $TOTAL = Get-TotalTime
-                $TOTAL = [timespan]::FromSeconds($TOTAL.TotalSeconds + $ELAPSED.TotalSeconds)
-                Save-TotalTime $TOTAL
+                End-Session
 
-                Save-DailyHistory $ELAPSED $TOTAL
+                $TOTALDAY = [timespan]::FromSeconds(
+                    (Get-DayTotal).TotalSeconds + $ELAPSED.TotalSeconds
+                )
+
+                #Save-DailyHistory $ELAPSED $TOTAL
+                Save-DailyHistory $ELAPSED $TOTALDAY
+
 
                 Remove-Item $STARTFILE -ErrorAction SilentlyContinue
 
-                Send-TelegramMessage "VPN desconectada. Tempo total hoje: $($TOTAL.ToString("hh\:mm"))"
+                #Send-TelegramMessage "VPN desconectada. Tempo total hoje: $($TOTAL.ToString("hh\:mm"))"
+                $TOTALFINAL = Get-DayTotal
+                Send-TelegramMessage "VPN desconectada. Tempo total hoje: $($TOTALFINAL.ToString("hh\:mm"))"
+
             }
         }
     }
@@ -980,6 +1085,5 @@ if ($CURRENTDAY -ne $LASTDAY) {
     Start-Sleep -Seconds 2 -ErrorAction SilentlyContinue
 
 }
-
 
 

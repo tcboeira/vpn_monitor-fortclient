@@ -6,7 +6,7 @@ O formato é baseado em "Keep a Changelog".
 
 ---
 
-## [0.12d] - 2026
+## [1.1.0] - 2026
 
 ### Adicionado
 - Monitoramento de tempo de conexão VPN
